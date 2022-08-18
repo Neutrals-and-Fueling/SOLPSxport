@@ -69,24 +69,32 @@ class SOLPSxport:
             print("Calling '2d_profiles' in directory: " + working)
             os.system('2d_profiles')
 
-        rx, ne_ = sut.readProf('ne3da.last10')
-        rx, dn_ = sut.readProf('dn3da.last10')
-        rx, te_ = sut.readProf('te3da.last10')
-        rx, ke_ = sut.readProf('ke3da.last10')
-        rx, ti_ = sut.readProf('ti3da.last10')
-        rx, ki_ = sut.readProf('ki3da.last10')
-        
+        #rx, ne_ = sut.readProf('ne3da.last10')
+        #rx, dn_ = sut.readProf('dn3da.last10')
+        #rx, te_ = sut.readProf('te3da.last10')
+        #rx, ke_ = sut.readProf('ke3da.last10')
+        #rx, ti_ = sut.readProf('ti3da.last10')
+        #rx, ki_ = sut.readProf('ki3da.last10')
+       
+        rx_, ne_ = sut.B2pl("ne 0 0 sumz writ jxa f.y")
+        dummy, dn_ = sut.B2pl("d 0 0 sumz writ jxa f.y")
+        dummy, te_ = sut.B2pl("te 0 0 sumz writ jxa f.y")
+        dummy, ke_ = sut.B2pl("kye 0 0 sumz writ jxa f.y")
+        dummy, ti_ = sut.B2pl("ti 0 0 sumz writ jxa f.y")
+        dummy, ki_ = sut.B2pl("kyi0 0 0 sumz writ jxa f.y")
+
         os.chdir(olddir)
 
         # Cast everything as np array so it doesn't break later when performing math operations
-        
+       
+        rx = np.array(rx_) 
         ne = np.array(ne_)
         dn = np.array(dn_)
         te = np.array(te_)
         ke = np.array(ke_)
         ti = np.array(ti_)
         ki = np.array(ki_)
-
+        
         last10_dic = {'rx':rx,'ne':ne,'dn':dn,'te':te,'ke':ke,'ti':ti,'ki':ki}
     
         self.data['solpsData']['last10'] = last10_dic
@@ -189,6 +197,39 @@ class SOLPSxport:
 
                 self.data['pedData']['fitVals'] = json.load(open(profiles_file))
 
+    # ----------------------------------------------------------------------------------------
+    
+    def loadProfDBPedFit_MAMmod(self, profiles_file = None, shotnum = None,
+                                timeid = None, runid = None, TT=True, verbose = True):
+        """
+        Either (1) provide the location of the saved profiles file (prefer using json module, previously used pickle)
+                   (should have extension *.pkl for now, json not set up yet)
+            or (2) give info to retrieve it from MDSplus
+
+            (1) can be written using getProfDBPedFit from SOLPSutils.py (easily reproduced manually if needed)
+            (2) requires access to atlas.gat.com
+        """
+        
+        if profiles_file is None:
+            if verbose: print('Getting profile fit data from MDSplus server on atlas.gat.com')
+            
+            self.timeid = timeid
+            self.data['pedData']['fitVals'] = sut.getProfDBPedFit(shotnum, timeid, runid)
+            
+        else:
+            if verbose: print('Reading profile fit data from saved file: ' + profiles_file)
+
+            if profiles_file[-4:] == '.pkl':
+                import pickle
+
+                with open(profiles_file, 'rb') as f:
+                    self.data['pedData']['fitVals'] = pickle.load(f)
+
+            else:
+                import json
+
+                self.data['pedData']['fitVals'] = json.load(open(profiles_file))
+    
     # ----------------------------------------------------------------------------------------
     
     def load_pfile(self, pfile_loc, plotit = False):
@@ -317,9 +358,195 @@ class SOLPSxport:
             plt.show(block = False)
 
     # ----------------------------------------------------------------------------------------
+    
+    def populatePedFits_MAMmod(self, nemod='tanh', temod='tanh', ncmod='spl',
+                               npsi=250, psinMax=None, TT=True, TieqTe=False, plotit=False):
+        """
+        Get the fitted tanh profiles (need to have run loadProfDBPedFit already)
+
+        Inputs:
+          XXmod   Fit used for each parameter
+          npsi    Number of points to populate full radial fit, from psin=0 (linearly distributed)
+          psinMax End of radial grid to populate, in units of psin
+                  (this defaults to be slightly larger than the SOLPS grid if nothing is given)
+        """
+        if psinMax is None:
+            if 'psiSOLPS' in self.data['solpsData'].keys():
+                psinMax = np.max(self.data['solpsData']['psiSOLPS']) + 0.001
+            else:
+                psinMax = 1.02
+
+        psiProf = np.linspace(0, psinMax, npsi+1)
+        
+        self.data['pedData']['fitPsiProf'] = psiProf
+        self.data['pedData']['fitProfs'] = {}
+    
+        # !!! Need to subtract shift from psiProf to move separatrix for power balance !!!
+
+        if TT:
+            # make ne profile
+            if nemod == 'tnh0':
+                necoef = self.data['pedData']['fitVals']['netnh0psi']['y']
+                neprof = sut.calcTanhMulti(necoef,psiProf)
+            elif nemod == 'tanh':
+                necoef = self.data['pedData']['fitVals']['netanhpsi']['y']
+                neprof = sut.calcTanhMulti(necoef,psiProf)
+            self.data['pedData']['fitProfs']['neprof'] = neprof
+            
+            # make Te profile
+            if temod == 'tnh0':
+                tecoef = self.data['pedData']['fitVals']['tetnh0psi']['y']
+                teprof = sut.calcTanhMulti(tecoef,psiProf)
+            elif nemod == 'tanh':
+                tecoef = self.data['pedData']['fitVals']['tetanhpsi']['y']
+                teprof = sut.calcTanhMulti(tecoef,psiProf)
+            self.data['pedData']['fitProfs']['teprof'] = teprof
+        
+            if ncmod == 'spl':
+                zfzpsi = self.data['pedData']['fitVals']['zfz1splpsi']['x']
+                zfzprof = self.data['pedData']['fitVals']['zfz1splpsi']['y']
+                zfzfunc = interp1d(zfzpsi, zfzprof, bounds_error = False,
+                                   fill_value = zfzprof[np.argmax(zfzpsi)])
+                # extrapolate to psin>1 using highest value of psin available
+        
+                self.data['pedData']['fitProfs']['ncprof'] = zfzfunc(psiProf) * neprof / 6
+            
+            elif ncmod == 'tanh':
+                nccoef = self.data['pedData']['fitVals']['nztanhpsi']['y']
+                ncprof = sut.calcTanhMulti(nccoef,psiProf)
+                self.data['pedData']['fitProfs']['ncprof'] = ncprof * neprof / 6
+           
+        else:
+            exppsi = self.data['pedData']['fitVals']['rho']**2
+
+            # make ne profile
+            neprof = self.data['pedData']['fitVals']['ne']
+            nefunc = interp1d(exppsi, neprof, bounds_error=False)
+            self.data['pedData']['fitProfs']['neprof'] = nefunc(psiProf) / 1e20 # needs to be in 1e20 m^{-3}
+
+            # make Te profile 
+            teprof = self.data['pedData']['fitVals']['Te']
+            tefunc = interp1d(exppsi, teprof, bounds_error=False)
+            self.data['pedData']['fitProfs']['teprof'] = tefunc(psiProf) / 1e3 # needs to be in keV
+            
+            if TieqTe == False:
+                # make Ti profile 
+                tiprof = self.data['pedData']['fitVals']['Ti']
+                tifunc = interp1d(exppsi, tiprof, bounds_error=False)
+                self.data['pedData']['fitProfs']['tiprof'] = tifunc(psiProf) / 1e3 # needs to be in keV
+            
+            if self.data['carbon']:
+                # make nc profile
+                ncprof = self.data['pedData']['fitVals']['nC6']
+                ncfunc = interp1d(exppsi, ncprof, bounds_error=False)
+                self.data['pedData']['fitProfs']['ncprof'] = (ncfunc(psiProf)/1e20) * (nefunc(psiProf)/1e20) / 6 # needs to be in 1e20 m^{-3}
+            
+ 
+        if plotit:
+            f, ax = plt.subplots(2, sharex = 'all')
+
+            ax[0].plot(psiProf, self.data['pedData']['fitProfs']['neprof'], '-b', lw = 2, label = 'n$_e$')
+            if self.data['carbon']:
+                ax[0].plot(psiProf, 6*self.data['pedData']['fitProfs']['ncprof'], '--k', lw = 2, label = '6*n$_C$')
+            ax[0].legend(loc='best')
+            ax[0].set_ylabel('n (10$^{20}$ m$^{-3}$)')
+            ax[0].grid('on')
+    
+            ax[1].plot(psiProf, self.data['pedData']['fitProfs']['teprof'], '-r', lw = 2)
+            ax[1].set_ylabel('T$_e$ (keV)')
+            ax[1].grid('on')
+            ax[1].set_xlabel('$\psi_n$')
+            ax[1].set_xlim([0, psinMax+0.01])
+            
+            ax[0].set_title('Experimental Pedestal Fits')
+            
+            plt.show(block = False)
+
+    # ----------------------------------------------------------------------------------------
+    
+    def loadPopulateCMODPedFits(self, profiles_file=None, shotnum=None, verbose=True, psinMax=None, npsi=250, plotit=False):
+
+        # load fits
+
+        if profiles_file is None:
+
+            ## still need to implement functionality to fetch from C-Mod MDSplus server
+
+            print('Please specify a profiles file')
+
+        else:
+
+            if verbose: print('Reading profile fit data from saved file: ' + profiles_file)
+
+            if profiles_file[-4:] == '.pkl':
+                import pickle
+
+                with open(profiles_file, 'rb') as f:
+                    exp_data_arr = pickle.load(f)
+                    self.data['pedData']['fitVals'] = {} # don't have fit coefficients saved - just fitted profile
+
+            else: # have not implemented json read on C-Mod data
+                import json
+
+                exp_data_arr = json.load(open(profiles_file)) 
+                self.data['pedData']['fitVals'] = {} # don't have fit coefficients saved - just fitted profile
+
+
+        # populate fits
+
+        if psinMax is None:
+            if 'psiSOLPS' in self.data['solpsData'].keys():
+                psinMax = np.max(self.data['solpsData']['psiSOLPS']) + 0.001
+            else:
+                psinMax = 1.02
+
+
+        psiProf = np.linspace(0, psinMax, npsi+1)
+
+        self.data['pedData']['fitPsiProf'] = psiProf
+        self.data['pedData']['fitProfs'] = {}
+
+        # make ne profile
+   
+        neprof = interp1d(exp_data_arr['rho']**2, exp_data_arr['ne'], bounds_error=False)(self.data['pedData']['fitPsiProf'])/1e20 # needs to be in 1e20
+        #neprof = interp1d(exp_data_arr[0]**2, exp_data_arr[7], bounds_error=False)(self.data['pedData']['fitPsiProf'])/1e14 # needs to be in 1e20
+        self.data['pedData']['fitProfs']['neprof'] = neprof
+
+        # make Te profile 
+
+        teprof = interp1d(exp_data_arr['rho']**2, exp_data_arr['Te'], bounds_error=False)(self.data['pedData']['fitPsiProf'])/1e3 # needs to be in keV
+        #teprof = interp1d(exp_data_arr[0]**2, exp_data_arr[9], bounds_error=False)(self.data['pedData']['fitPsiProf'])/1e3 # needs to be in keV
+        self.data['pedData']['fitProfs']['teprof'] = teprof
+        
+        # make Ti profile 
+
+        tiprof = interp1d(exp_data_arr['rho']**2, exp_data_arr['Ti'], bounds_error=False)(self.data['pedData']['fitPsiProf'])/1e3 # needs to be in keV
+        self.data['pedData']['fitProfs']['tiprof'] = tiprof
+
+
+        if plotit:
+
+            f, ax = plt.subplots(2, sharex='all')
+
+            ax[0].plot(psiProf, neprof, '-b', lw = 2, label = 'n$_e$')
+            ax[0].legend(loc='best')
+            ax[0].set_ylabel('n$_e$ (10$^{20}$ m$^{-3}$)')
+            ax[0].grid('on')
+
+            ax[1].plot(psiProf, teprof, '-r', lw = 2)
+            ax[1].set_ylabel('T$_e$ (keV)')
+            ax[1].grid('on')
+            ax[1].set_xlabel('$\psi_n$')
+            ax[1].set_xlim([0, psinMax+0.01])
+        
+            ax[0].set_title('Experimental Pedestal Fits')
+        
+            plt.show(block = False)
+
+    # ----------------------------------------------------------------------------------------
 
     def modify_ti(self, ratio_fileloc = '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt',
-                  sol_points = None, max_psin = 1.1, decay_length = 0.015,
+                  sol_points = None, max_psin = 1.1, decay_length = 0.015, TT=True,
                   rad_loc_for_exp_decay = 1.0, reduce_ti = True, ti_min = 1, plotit = False):
         """
         Manually modify the Ti profile to be more realistic
@@ -337,9 +564,19 @@ class SOLPSxport:
           ti_min       Ti decays exponentially to this value (in eV)
         """
 
-        tiexp = self.data['pedData']['fitVals']['tisplpsi']['y']
-        tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+        if TT:
+            tiexp = self.data['pedData']['fitVals']['tisplpsi']['y']
+            tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
 
+        else:
+            # make Ti profile 
+            tifunc = interp1d(self.data['pedData']['fitVals']['rho'], self.data['pedData']['fitVals']['Ti'], bounds_error=False)
+            tiexppsi = self.data['pedData']['fitPsiProf']
+            tiexp = tifunc(tiexppsi) / 1e3 # needs to be in keV
+            
+            #tiexp = self.data['pedData']['fitProfs']['tiprof']
+            #tiexppsi = self.data['pedData']['fitPsiProf']
+        
         r_cell = self.data['solpsData']['crLowerLeft']
         z_cell = self.data['solpsData']['czLowerLeft']
         psin = self.data['solpsData']['psiSOLPS']
@@ -713,14 +950,14 @@ class SOLPSxport:
             else:
                 ax[-1].set_xlabel('x')
             ax[0].set_xlim([np.min(x_nc) - 0.01, np.max(x_nc) + 0.01])
-            plt.tight_layout()
+#            plt.tight_layout()
             plt.show(block = False)
     
     # ----------------------------------------------------------------------------------------
     
     def calcXportCoef(self, plotit = True, Dn_min = 0.001, chie_min = 0.01, chii_min = 0.01,
                       Dn_max = 10, chie_max = 200, chii_max = 200, vrc_mag=0.0, ti_decay_len = 0.015,
-                      reduce_Ti_fileloc = '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt',
+                      reduce_Ti_fileloc = '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt', TieqTe = False, TT=False,
                       use_ratio_bc = True, debug_plots = False, verbose = False, figblock = False):
         """
         Calculates the transport coefficients to be written into b2.transport.inputfile
@@ -736,6 +973,7 @@ class SOLPSxport:
                         Set to None to use Ti from CER C+6
           vrc_mag:      Magnetude of the carbon velocity pinch
                         (shape and position are still hard coded)
+          TieqTe:       True if Ti data not available - this is the case for some C-Mod runs
         """
         # Load data that was read from SOLPS .last10 profiles
 
@@ -837,17 +1075,24 @@ class SOLPSxport:
         
         # Ti and ki
 
+        self.TieqTe = TieqTe
         if reduce_Ti_fileloc or (ti_decay_len is not None):
             self.modify_ti(ratio_fileloc = reduce_Ti_fileloc, sol_points = 10, max_psin = np.max(psi_solps) + 0.001,
-                           decay_length = ti_decay_len, rad_loc_for_exp_decay = 1.0,
+                           decay_length = ti_decay_len, rad_loc_for_exp_decay = 1.0, TT=TT,
                            plotit = debug_plots, reduce_ti = (reduce_Ti_fileloc is not None))
 
             tiexp = 1.0e3*self.data['pedData']['fitVals']['ti_mod']['y']
             tiexppsi = self.data['pedData']['fitVals']['ti_mod']['x']
 
         else:
-            tiexp = 1.0e3*self.data['pedData']['fitVals']['tisplpsi']['y']
-            tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+
+            if TieqTe: #if no Ti data available, set equal to Te
+                tiexp = teexp
+                tiexppsi = self.data['pedData']['fitPsiProf']
+                self.TieqTe = True
+            else:
+                tiexp = 1.0e3*self.data['pedData']['fitVals']['tisplpsi']['y']
+                tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
         
         dsa_tiprofile = psi_to_dsa_func(tiexppsi)
         
@@ -911,7 +1156,6 @@ class SOLPSxport:
             D_carbon = Dn_min + 0.0 * dnew_flux
             # D_carbon[19:] = dnew_flux[19:]
             D_carbon[1:] = dnew_flux[1:]
-                    
         else:
             vr_carbon = None
             D_carbon = None
@@ -978,8 +1222,13 @@ class SOLPSxport:
             tiexp = 1.0e3*self.data['pedData']['fitVals']['ti_mod']['y']
             tiexppsi = self.data['pedData']['fitVals']['ti_mod']['x']
         else:
-            tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
-            tiexp = 1.0e3*self.data['pedData']['fitVals']['tisplpsi']['y']
+            if self.TieqTe: #if no Ti data available, set equal to Te
+                tiexp = teexp
+                tiexppsi = self.data['pedData']['fitPsiProf']
+                self.TieqTe = True
+            else:
+                tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+                tiexp = 1.0e3*self.data['pedData']['fitVals']['tisplpsi']['y']
 
 
         psi_solps = self.data['solpsData']['psiSOLPS']
@@ -1069,9 +1318,10 @@ class SOLPSxport:
         ax[1, 2].grid('on')
         ax[1, 2].legend(loc='best', fontsize=12)
 
-        ax[0, 0].set_xticks(np.arange(0.84, 1.05, 0.04))
-        ax[0, 0].set_xlim(xlims)
-        plt.tight_layout()
+   # commented this because the plot was too crowded for my case - andres
+        #ax[0, 0].set_xticks(np.arange(0.84, 1.05, 0.04))
+        #ax[0, 0].set_xlim(xlims)
+        #plt.tight_layout()
 
         plt.show(block=figblock)
 
@@ -1296,8 +1546,9 @@ class SOLPSxport:
             ki = self.data['solpsData']['xportCoef']['kinew_ratio']
         else:
             ki = self.data['solpsData']['xportCoef']['kinew_flux']
-        vrc = self.data['solpsData']['xportCoef']['vr_carbon']
-        dc = self.data['solpsData']['xportCoef']['D_carbon'] * scale_D
+ 
+        vrc = self.data['solpsData']['xportCoef']['vr_carbon'] if self.data['carbon'] else None
+        dc = self.data['solpsData']['xportCoef']['D_carbon'] * scale_D if self.data['carbon'] else None # if not using carbon, will throw                                                                                                            # an error with the multiplication
         carbon = self.data['carbon']
         
         # Step the boundary points out a tiny bit so that they are
