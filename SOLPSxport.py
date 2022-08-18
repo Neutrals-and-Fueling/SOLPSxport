@@ -69,25 +69,26 @@ class SOLPSxport:
             print("Calling '2d_profiles' in directory: " + working)
             os.system('2d_profiles')
 
-        #rx, ne_ = sut.readProf('ne3da.last10')
-        #rx, dn_ = sut.readProf('dn3da.last10')
-        #rx, te_ = sut.readProf('te3da.last10')
-        #rx, ke_ = sut.readProf('ke3da.last10')
-        #rx, ti_ = sut.readProf('ti3da.last10')
-        #rx, ki_ = sut.readProf('ki3da.last10')
+        rx, ne_ = sut.readProf('ne3da.last10')
+        rx, dn_ = sut.readProf('dn3da.last10')
+        rx, te_ = sut.readProf('te3da.last10')
+        rx, ke_ = sut.readProf('ke3da.last10')
+        rx, ti_ = sut.readProf('ti3da.last10')
+        rx, ki_ = sut.readProf('ki3da.last10')
        
-        rx_, ne_ = sut.B2pl("ne 0 0 sumz writ jxa f.y")
-        dummy, dn_ = sut.B2pl("d 0 0 sumz writ jxa f.y")
-        dummy, te_ = sut.B2pl("te 0 0 sumz writ jxa f.y")
-        dummy, ke_ = sut.B2pl("kye 0 0 sumz writ jxa f.y")
-        dummy, ti_ = sut.B2pl("ti 0 0 sumz writ jxa f.y")
-        dummy, ki_ = sut.B2pl("kyi0 0 0 sumz writ jxa f.y")
+        # I added this block to work with double nulls, since .last10 are not working atm
+        #rx_, ne_ = sut.B2pl("ne 0 0 sumz writ jxa f.y")
+        #dummy, dn_ = sut.B2pl("d 0 0 sumz writ jxa f.y")
+        #dummy, te_ = sut.B2pl("te 0 0 sumz writ jxa f.y")
+        #dummy, ke_ = sut.B2pl("kye 0 0 sumz writ jxa f.y")
+        #dummy, ti_ = sut.B2pl("ti 0 0 sumz writ jxa f.y")
+        #dummy, ki_ = sut.B2pl("kyi0 0 0 sumz writ jxa f.y")
+        #orx = np.array(rx_) 
 
         os.chdir(olddir)
 
         # Cast everything as np array so it doesn't break later when performing math operations
        
-        rx = np.array(rx_) 
         ne = np.array(ne_)
         dn = np.array(dn_)
         te = np.array(te_)
