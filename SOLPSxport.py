@@ -25,14 +25,14 @@ eV = 1.60217662e-19
 
 class SOLPSxport:
 
-    def __init__(self, workdir, gfile_loc, carbon_bool = True, b2plot_dev_x11 = False):
+    def __init__(self, workdir, gfile_loc, impurity_list = ['c'], b2plot_dev_x11 = False):
         """
         Make sure you source setup.csh or setup.ksh before running any of this!
         
         Inputs:
           workdir         Directory with the SOLPS outputs
           gfile_loc       location of corresponding g file
-          carbon_bool     Set to False if carbon is not in the run
+          impurity_list   List of all the impurity species included in the plasma simulation
           b2plot_dev_x11  Set to True if you want a figure to pop up for every b2plot call
         """
         shot_loc_in_gfile_string = gfile_loc.rfind('g')
@@ -43,13 +43,18 @@ class SOLPSxport:
             workdir_short = workdir[shot_ind_in_workdir:]
         else:
             workdir_short = None
-            
-        self.data = {'workdir':workdir, 'workdir_short':workdir_short, 'gfile_loc': gfile_loc,
-                     'pedData':{}, 'solpsData':{'profiles':{}}, 'carbon':carbon_bool, 'shot':shot}
 
-        if (not b2plot_dev_x11) and os.environ['B2PLOT_DEV'] == 'x11 ps':
-            print("Changing environment variable B2PLOT_DEV to 'ps'")
-            os.environ['B2PLOT_DEV'] = 'ps'
+        self.data = {'workdir':workdir, 'workdir_short':workdir_short, 'gfile_loc': gfile_loc,
+                     'expData':{'fitProfs':{}}, 'solpsData':{'profiles':{}},
+                     'impurities':[imp.lower() for imp in impurity_list], 'shot':shot}
+
+        if 'B2PLOT_DEV' in os.environ.keys():
+            if (not b2plot_dev_x11) and os.environ['B2PLOT_DEV'] == 'x11 ps':
+                print("Changing environment variable B2PLOT_DEV to 'ps'")
+                os.environ['B2PLOT_DEV'] = 'ps'
+        else:
+            print('WARNING: Need to source setup.csh for SOLPS-ITER distribution for complete SOLPSxport workflow')
+
         self.timeid = None
 
     # ----------------------------------------------------------------------------------------        
@@ -161,19 +166,19 @@ class SOLPSxport:
     def loadProfDBPedFit(self, profiles_file = None, shotnum = None,
                          timeid = None, runid = None, verbose = True):
         """
-        Either (1) provide the location of the saved profiles file (prefer using json module, previously used pickle)
-                   (should have extension *.pkl for now, json not set up yet)
+        Either (1) provide the location of the saved profiles file
+                   (should have extension *.pkl)
             or (2) give info to retrieve it from MDSplus
 
             (1) can be written using getProfDBPedFit from SOLPSutils.py (easily reproduced manually if needed)
-            (2) requires access to atlas.gat.com
+            (2) requires access to atlas.gat.com (probably running on Iris or Omega at GA)
         """
         
         if profiles_file is None:
             if verbose: print('Getting profile fit data from MDSplus server on atlas.gat.com')
             
             self.timeid = timeid
-            self.data['pedData']['fitVals'] = sut.getProfDBPedFit(shotnum, timeid, runid)
+            self.data['expData']['fitVals'] = sut.getProfDBPedFit(shotnum, timeid, runid)
             
         else:
             if verbose: print('Reading profile fit data from saved file: ' + profiles_file)
@@ -182,12 +187,24 @@ class SOLPSxport:
                 import pickle
 
                 with open(profiles_file, 'rb') as f:
-                    self.data['pedData']['fitVals'] = pickle.load(f)
+                    self.data['expData']['fitVals'] = pickle.load(f)
 
             else:
-                import json
+                print("ERROR: Cannot open ProfDB (Tom's Tools) profile file if not formatted as .pkl")
+                # import json
+                #
+                # self.data['expData']['fitVals'] = json.load(open(profiles_file))
 
-                self.data['pedData']['fitVals'] = json.load(open(profiles_file))
+    # ----------------------------------------------------------------------------------------
+
+    # def readMastData(self):
+    #
+    #     self.data['expData']['fitPsiProf'] =
+    #     self.data['expData']['fitProfs']['neprof'] =
+    #     self.data['expData']['fitProfs']['teprof'] =
+    #
+    #     try:
+    #         self.data['expData']['fitProfs']['tiprof'] =
 
     # ----------------------------------------------------------------------------------------
     
@@ -195,42 +212,46 @@ class SOLPSxport:
         self.timeid = pfile_loc[pfile_loc.rfind('.')+1:]
 
         pfile_dict = sut.read_pfile(pfile_loc)
+        self.data['expData']['pfile'] = pfile_dict
 
-        psin = pfile_dict['psinorm']
-        ne = pfile_dict['ne(10^20/m^3)'] * 10  # needs to be in units of 10^19/m^3
-        Te = pfile_dict['te(KeV)'] * 1e3
+        self.data['expData']['fitPsiProf'] = pfile_dict['psinorm']
+        self.data['expData']['fitProfs']['neprof'] = pfile_dict['ne(10^20/m^3)']
+        self.data['expData']['fitProfs']['teprof'] = pfile_dict['te(KeV)']
+
         try:
-            Ti = pfile_dict['ti(KeV)'] * 1e3
+            self.data['expData']['fitProfs']['tipsi'] = pfile_dict['psinorm']
+            self.data['expData']['fitProfs']['tiprof'] = pfile_dict['ti(KeV)']
         except:
-            Ti = Te
-            
-        self.data['pedData']['pfile'] = pfile_dict
+            print('No Ti data in pfile, defaulting to Ti = Te')
+            self.data['expData']['fitProfs']['tiprof'] = self.data['expData']['fitProfs']['teprof']
         
         if plotit:
-            SOLPS_profs = self.data['solpsData']['last10']
-            rne_SOLPS = SOLPS_profs['rne']
-            rte_SOLPS = SOLPS_profs['rte']
-            rti_SOLPS = SOLPS_profs['rti']
-            ne_SOLPS = SOLPS_profs['ne']
-            te_SOLPS = SOLPS_profs['te']
-            ti_SOLPS = SOLPS_profs['ti']
-            
-            
+            solps_profs = self.data['solpsData']['last10']
+            rne_SOLPS = solps_profs['rne']
+            rte_SOLPS = solps_profs['rte']
+            rti_SOLPS = solps_profs['rti']
+            ne_SOLPS = solps_profs['ne']
+            te_SOLPS = solps_profs['te']
+            ti_SOLPS = solps_profs['ti']
+
             f, ax = plt.subplots(3, sharex = 'all')
             ax[0].plot(np.array(rne_SOLPS) + 1, ne_SOLPS * 1e-19, '-kx', lw=2, label='ne_SOLPS')
-            ax[0].plot(psin, ne, '--r', lw = 2, label = 'ne')
+            ax[0].plot(self.data['expData']['fitPsiProf'], self.data['expData']['fitProfs']['neprof'],
+                       '--r', lw = 2, label = 'ne')
             ax[0].set_ylabel('n$_e$ (10$^{19}$ m$^{-3}$)')
             ax[0].legend(loc = 'best')
             ax[0].grid('on')
 
             ax[1].plot(np.array(rte_SOLPS) + 1, te_SOLPS, '-kx', lw = 2, label = 'Te_SOLPS')
-            ax[1].plot(psin, Te, '--r', lw = 2, label = 'Te')
+            ax[1].plot(self.data['expData']['fitPsiProf'], self.data['expData']['fitProfs']['teprof'],
+                       '--r', lw = 2, label = 'Te')
             ax[1].set_ylabel('Te (eV)')
             ax[1].legend(loc = 'best')
             ax[1].grid('on')
             
             ax[2].plot(np.array(rti_SOLPS) + 1, ti_SOLPS, '-kx', lw = 2, label = 'Ti_SOLPS')
-            ax[2].plot(psin, Ti, '--r', lw = 2, label = 'Ti')
+            ax[2].plot(self.data['expData']['fitPsiProf'], self.data['expData']['fitProfs']['tiprof'],
+                       '--r', lw = 2, label = 'Ti')
             ax[2].set_ylabel('Ti (eV)')
             ax[2].legend(loc = 'best')
             ax[2].grid('on')
@@ -245,13 +266,20 @@ class SOLPSxport:
                         npsi=250, psinMax=None, plotit=False):
         """
         Get the fitted tanh profiles (need to have run loadProfDBPedFit already)
+        Should nominally be able to handle other fit types, but only implemented 'tanh' and
+        'tnh0' for electron profiles and 'tanh' and 'spl' for carbon density profiles so far
 
         Inputs:
-          XXmod   Fit used for each parameter
+          XXmod   Fit used for each parameter (only 'tanh' and 'tnh0' implemented and tested
+                  for electron profiles so far, or 'tanh' and 'spl' for carbon density profiles)
           npsi    Number of points to populate full radial fit, from psin=0 (linearly distributed)
           psinMax End of radial grid to populate, in units of psin
                   (this defaults to be slightly larger than the SOLPS grid if nothing is given)
         """
+        if (nemod not in ['tanh', 'tnh0']) or (temod not in ['tanh', 'tnh0']):
+            print("ERROR: Cannot yet populate electron profile fits other than 'tanh' or 'tnh0'")
+            return
+
         if psinMax is None:
             if 'psiSOLPS' in self.data['solpsData'].keys():
                 psinMax = np.max(self.data['solpsData']['psiSOLPS']) + 0.001
@@ -260,48 +288,50 @@ class SOLPSxport:
 
         psiProf = np.linspace(0, psinMax, npsi+1)
         
-        self.data['pedData']['fitPsiProf'] = psiProf
-        self.data['pedData']['fitProfs'] = {}
+        self.data['expData']['fitPsiProf'] = psiProf
+        self.data['expData']['fitProfs'] = {}
     
         # !!! Need to subtract shift from psiProf to move separatrix for power balance !!!
 
         # make ne profile
-        if nemod == 'tnh0':
-            necoef = self.data['pedData']['fitVals']['netnh0psi']['y']
-            neprof = sut.calcTanhMulti(necoef,psiProf)
-        elif nemod == 'tanh':
-            necoef = self.data['pedData']['fitVals']['netanhpsi']['y']
-            neprof = sut.calcTanhMulti(necoef,psiProf)
-        self.data['pedData']['fitProfs']['neprof'] = neprof
+        necoef = self.data['expData']['fitVals']['ne' + nemod + 'psi']['y']
+        neprof = sut.calcTanhMulti(necoef, psiProf)
+        self.data['expData']['fitProfs']['neprof'] = neprof
             
         # make Te profile
-        if temod == 'tnh0':
-            tecoef = self.data['pedData']['fitVals']['tetnh0psi']['y']
-            teprof = sut.calcTanhMulti(tecoef,psiProf)
-        elif nemod == 'tanh':
-            tecoef = self.data['pedData']['fitVals']['tetanhpsi']['y']
-            teprof = sut.calcTanhMulti(tecoef,psiProf)
-        self.data['pedData']['fitProfs']['teprof'] = teprof
+        tecoef = self.data['expData']['fitVals']['te' + temod + 'psi']['y']
+        teprof = sut.calcTanhMulti(tecoef, psiProf)
+        self.data['expData']['fitProfs']['teprof'] = teprof
+
+        # make Ti profile (already made, just populate)
+        self.data['expData']['fitProfs']['tipsi'] = self.data['expData']['fitVals']['tisplpsi']['x']
+        self.data['expData']['fitProfs']['tiprof'] = self.data['expData']['fitVals']['tisplpsi']['y']
         
         if ncmod == 'spl':
-            zfzpsi = self.data['pedData']['fitVals']['zfz1splpsi']['x']
-            zfzprof = self.data['pedData']['fitVals']['zfz1splpsi']['y']
+            zfzpsi = self.data['expData']['fitVals']['zfz1splpsi']['x']
+            zfzprof = self.data['expData']['fitVals']['zfz1splpsi']['y']
             zfzfunc = interp1d(zfzpsi, zfzprof, bounds_error = False,
                                fill_value = zfzprof[np.argmax(zfzpsi)])
             # extrapolate to psin>1 using highest value of psin available
         
-            self.data['pedData']['fitProfs']['ncprof'] = zfzfunc(psiProf) * neprof / 6
+            self.data['expData']['fitProfs']['ncprof'] = zfzfunc(psiProf) * neprof / 6
             
         elif ncmod == 'tanh':
-            nccoef = self.data['pedData']['fitVals']['nztanhpsi']['y']
+            nccoef = self.data['expData']['fitVals']['nztanhpsi']['y']
             ncprof = sut.calcTanhMulti(nccoef,psiProf)
-            self.data['pedData']['fitProfs']['ncprof'] = ncprof * neprof / 6
+            self.data['expData']['fitProfs']['ncprof'] = ncprof * neprof / 6
+
+        if np.any(neprof < 0) or np.any(teprof < 0):
+            print("WARNING: Experimental profile is negative!!!")
+            print("Either (a) modify profile by using a different fit, (b) set a " +
+                  "decay length using 'enforce_decay_length', or (c) ignore the profile" +
+                  " fit and set a constant diffusivity using 'flatSOLcoeffs'")
             
         if plotit:
             f, ax = plt.subplots(2, sharex = 'all')
 
             ax[0].plot(psiProf, neprof, '-b', lw = 2, label = 'n$_e$')
-            ax[0].plot(psiProf, 6*self.data['pedData']['fitProfs']['ncprof'], '--k', lw = 2, label = '6*n$_C$')
+            ax[0].plot(psiProf, 6*self.data['expData']['fitProfs']['ncprof'], '--k', lw = 2, label = '6*n$_C$')
             ax[0].legend(loc='best')
             ax[0].set_ylabel('n (10$^{20}$ m$^{-3}$)')
             ax[0].grid('on')
@@ -318,9 +348,9 @@ class SOLPSxport:
 
     # ----------------------------------------------------------------------------------------
 
-    def modify_ti(self, ratio_fileloc = '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt',
+    def modify_ti(self, ratio_fileloc = None,
                   sol_points = None, max_psin = 1.1, decay_length = 0.015,
-                  rad_loc_for_exp_decay = 1.0, reduce_ti = True, ti_min = 1, plotit = False):
+                  rad_loc_for_exp_decay = 1.0, reduce_ti = False, ti_min = 1, plotit = False):
         """
         Manually modify the Ti profile to be more realistic
 
@@ -328,24 +358,26 @@ class SOLPSxport:
         the main ion species in the edge.
 
         Inputs:
-          sol_points   Number of extra points to add in the SOL
-          max_psi      sol_points will be evenly distributed between rad_loc_for_exp_decay
-                       and max_psi
-          decay_length Decay length for exponential falloff imposed into SOL (in units of psin)
-          reduce_ti    Use a profile from a single comparison case of T_D vs T_C+6
-                       to reduce the "measured" value of T_D to be more realistic
-          ti_min       Ti decays exponentially to this value (in eV)
+          ratio_fileloc Location of file with a profile of the ratio of TD / TC
+                        example file on GA clusters (Iris and Omega):
+                        '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt'
+          sol_points    Number of extra points to add in the SOL
+          max_psi       sol_points will be evenly distributed between rad_loc_for_exp_decay
+                        and max_psi
+          decay_length  Decay length for exponential falloff imposed into SOL (in units of psin)
+          reduce_ti     Use a profile from a single comparison case of T_D vs T_C+6
+                        to reduce the "measured" value of T_D to be more realistic
+          ti_min        Ti decays exponentially to this value (in eV)
         """
 
-        tiexp = self.data['pedData']['fitVals']['tisplpsi']['y']
-        tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+        tiexp = self.data['expData']['fitProfs']['tiprof']
+        tiexppsi = self.data['expData']['fitProfs']['tipsi']
 
         r_cell = self.data['solpsData']['crLowerLeft']
         z_cell = self.data['solpsData']['czLowerLeft']
         psin = self.data['solpsData']['psiSOLPS']
 
         dr_flux = np.sqrt(np.diff(r_cell)**2 + np.diff(z_cell)**2)  # change in minor radial position (in m, but in flux r direction)
-
 
         ti_mod = tiexp.copy()
         xrad = tiexppsi.copy()
@@ -368,7 +400,7 @@ class SOLPSxport:
                         T_DC_ratio.append(np.float(elements[1]))
 
                 T_ratio_fit = np.interp(tiexppsi, np.array(psin_ratio),
-                                        np.array(T_DC_ratio), left=1)
+                                        np.array(T_DC_ratio), left=T_DC_ratio[0])
                 # if > given range, chooses endpoint
                 ti_reduced = tiexp * T_ratio_fit
 
@@ -397,8 +429,8 @@ class SOLPSxport:
                 np.exp(-(xrad[outer_inds]-rad_loc_for_exp_decay) / decay_length) + ti_min * 1e-3
 
         if plotit:
-            psi_TS = self.data['pedData']['fitPsiProf']
-            teexp = self.data['pedData']['fitProfs']['teprof']
+            psi_TS = self.data['expData']['fitPsiProf']
+            teexp = self.data['expData']['fitProfs']['teprof']
 
             plt.figure()
             plt.plot(psi_TS, teexp, 'g', lw=1, label = 'T$_e$ (TS)')
@@ -413,7 +445,23 @@ class SOLPSxport:
             plt.grid('on')
             plt.show(block=False)
 
-        self.data['pedData']['fitVals']['ti_mod'] = {'x':xrad, 'y':ti_mod}
+        self.data['expData']['fitProfs']['ti_mod_psi'] = xrad
+        self.data['expData']['fitProfs']['ti_mod'] = ti_mod
+
+    # ----------------------------------------------------------------------------------------
+
+    def enforce_decay_length(self, prof_choice, sol_points = None, max_psin = 1.1, decay_length = 0.015,
+                             rad_loc_for_exp_decay = 1.0, min_val = 1, plotit = False):
+        """
+        Enforce an exponential decay length in the SOL beyond a designated position
+
+        Ensures smooth profiles, and can avoid dealing with density shoulder or unphysical measurements
+
+        Inputs:
+          prof_choice    Choose from Te, ne, or Ti
+
+        """
+        pass
 
     # ----------------------------------------------------------------------------------------
         
@@ -441,8 +489,8 @@ class SOLPSxport:
             psin[fit] = np.array(psin_read)
             vals[fit] = np.array(vals_read)
         
-        if 'fitVals' not in self.data['pedData']:
-            self.data['pedData']['fitVals'] = {'nedatpsi':{}, 'zfz1datpsi':{}, 'tisplpsi':{}}
+        if 'fitVals' not in self.data['expData']:
+            self.data['expData']['fitVals'] = {'nedatpsi':{}, 'zfz1datpsi':{}, 'tisplpsi':{}}
         
         # Set 'fitProfs' values (linearly interpolate if psi locations from prof files are no good)
         
@@ -450,33 +498,33 @@ class SOLPSxport:
             
             # Deuterium profiles
             
-            self.data['pedData']['fitPsiProf'] = psin[fit]
-            self.data['pedData']['fitProfs'] = {'neprof': vals['n_e'] / 1.0e20,
+            self.data['expData']['fitPsiProf'] = psin[fit]
+            self.data['expData']['fitProfs'] = {'neprof': vals['n_e'] / 1.0e20,
                                                 'teprof': vals['T_e'] / 1.0e3}
             # keep units consistent with Tom's tools
 
-            self.data['pedData']['fitVals']['tisplpsi']['x'] = psin[fit]
+            self.data['expData']['fitProfs']['tipsi'] = psin[fit]
             if 'T_D' in vals.keys():
-                self.data['pedData']['fitVals']['tisplpsi']['y'] = vals['T_D'] / 1.0e3
+                self.data['expData']['fitProfs']['tiprof'] = vals['T_D'] / 1.0e3
             else:   # assume T_D = T_C
-                self.data['pedData']['fitVals']['tisplpsi']['y'] = vals['T_12C6'] / 1.0e3
+                self.data['expData']['fitProfs']['tiprof'] = vals['T_12C6'] / 1.0e3
             
             # Carbon profiles
             
-            if self.data['carbon']:
-                self.data['pedData']['fitVals']['nedatpsi']['x'] = psin[fit]
-                self.data['pedData']['fitVals']['nedatpsi']['y'] = vals['n_e'] / 1.0e20
+            if 'c' in self.data['impurities']:
+                self.data['expData']['fitVals']['nedatpsi']['x'] = psin[fit]
+                self.data['expData']['fitVals']['nedatpsi']['y'] = vals['n_e'] / 1.0e20
                 
-                self.data['pedData']['fitVals']['zfz1datpsi']['x'] = psin[fit]
-                self.data['pedData']['fitVals']['zfz1datpsi']['y'] = 6*vals['n_12C6']/vals['n_e']
+                self.data['expData']['fitVals']['zfz1datpsi']['x'] = psin[fit]
+                self.data['expData']['fitVals']['zfz1datpsi']['y'] = 6*vals['n_12C6']/vals['n_e']
 
-                self.data['pedData']['fitProfs']['ncprof'] = vals['n_12C6']
+                self.data['expData']['fitProfs']['ncprof'] = vals['n_12C6']
             
         else:
             
             psiProf = np.linspace(0, psiMax, min_npsi + 1)
     
-            self.data['pedData']['fitPsiProf'] = psiProf
+            self.data['expData']['fitPsiProf'] = psiProf
             vals_interp = {}
             for fit in profs:
                 fitfunc = interp1d(psin[fit], vals[fit])
@@ -566,21 +614,33 @@ class SOLPSxport:
         self.data['solpsData']['psiSOLPS'] = np.array(psi_solps)
 
         if plotit:
+            psiN_range = [np.min(psi_solps), np.max(psi_solps)]
+
             psiN_copy = psiN.copy()
-            psiN_copy[psiN > 1.01] = np.nan
+            psiN_copy[psiN > psiN_range[1]] = np.nan
+            psiN_copy[psiN < psiN_range[0]] = np.nan
             psin_masked = np.ma.masked_invalid(psiN_copy)
 
             plt.figure()
-            plt.pcolormesh(gR, gZ, psin_masked, cmap = 'inferno')
-            plt.colorbar()
+            plt.contourf(gR, gZ, psin_masked, levels=[psiN_range[0], 1, psiN_range[1]], colors = [])
+            # plt.pcolormesh(gR, gZ, psin_masked, cmap = 'inferno')
+            # plt.colorbar(ticks = [0.25,0.5,0.75,1])
             plt.plot(g['rlim'], g['zlim'], 'k', lw = 2)
-            plt.contour(gR, gZ, psiN, [1], colors = 'k')
-            plt.title('$\psi_N$ from g file')
+            # plt.contour(gR, gZ, psiN, [1], colors='k')
+            # plt.contour(gR, gZ, psiN, [psiN_range[0]], colors='r', linestyles='dashed')
+            # plt.contour(gR, gZ, psiN, [psiN_range[1]], colors='r', linestyles='dashed')
+            gfile_name = self.data['gfile_loc'][self.data['gfile_loc'].rfind('/')+1:]
+            plt.title(gfile_name)
             plt.axis('equal')
+            plt.xlabel('R (m)')
+            plt.ylabel('Z (m)')
+            plt.xticks([1.0, 1.5, 2.0, 2.5])
+            plt.yticks(np.arange(-1.5, 1.6, 0.5))
             plt.xlim([np.min(gR), np.max(gR)])
             plt.ylim([np.min(gZ), np.max(gZ)])
-            plt.plot(R_solps_top, Z_solps_top, 'g', lw = 3)
-            plt.plot([1.94, 1.94], [-1.5, 1.5], '--k', lw=1)  # Thomson laser path
+            plt.plot(R_solps_top, Z_solps_top, 'g', lw=3)
+            plt.plot([1.94, 1.94], [-1.5, 1.5], ':k', lw=1)  # Thomson laser path
+            plt.tight_layout()
 
             plt.figure()
             plt.plot(R_solps_top, psi_solps, 'k', lw = 2)
@@ -603,7 +663,6 @@ class SOLPSxport:
         # dummy, hy1 = sut.B2pl("hy1 writ jxa f.y")  # not used anymore
         dummy, qe = sut.B2pl("fhey sy m/ writ jxa f.y")
         dummy, qi = sut.B2pl("fhiy sy m/ writ jxa f.y")
-        
 
         for c in [fluxTot, fluxConv]:
             if not c:
@@ -681,9 +740,9 @@ class SOLPSxport:
             f, ax = plt.subplots(3, sharex = 'all')
 
             ax[0].plot(x_nc, np.array(nc_solps)/1e18, '-kx', lw = 2, label = 'SOLPS')
-            if 'ncprof' in self.data['pedData']['fitProfs'].keys():
-                nc_psi = self.data['pedData']['fitPsiProf']
-                nc_prof = np.array(self.data['pedData']['fitProfs']['ncprof']*100)  # in  m^-3
+            if 'ncprof' in self.data['expData']['fitProfs'].keys():
+                nc_psi = self.data['expData']['fitPsiProf']
+                nc_prof = np.array(self.data['expData']['fitProfs']['ncprof']*100)  # in  m^-3
                 ax[0].plot(nc_psi, nc_prof, '-ro', lw = 2, label = 'Experiment')
                 ax[0].legend(loc='best')
             elif verbose:
@@ -719,8 +778,9 @@ class SOLPSxport:
     # ----------------------------------------------------------------------------------------
     
     def calcXportCoef(self, plotit = True, Dn_min = 0.001, chie_min = 0.01, chii_min = 0.01,
-                      Dn_max = 10, chie_max = 200, chii_max = 200, vrc_mag=0.0, ti_decay_len = 0.015,
-                      reduce_Ti_fileloc = '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt',
+                      Dn_max = 100, chie_max = 400, chii_max = 400, vrc_mag=0.0, ti_decay_len = 0.015,
+                      reduce_Ti_fileloc = None,
+                      fractional_change = 1, exp_prof_rad_shift = 0, chii_eq_chie = False,
                       use_ratio_bc = True, debug_plots = False, verbose = False, figblock = False):
         """
         Calculates the transport coefficients to be written into b2.transport.inputfile
@@ -730,10 +790,14 @@ class SOLPSxport:
         Inputs:
           ti_decay_len: Decay length for exponential falloff outside separatrix (units of psin)
                         (set to None to skip this)
+          fractional_change: Set to number smaller than 1 if the incremental change is too large and
+                             you want to take a half step or something different
+          exp_prof_rad_shift: Apply a radial shift to experimental profiles
+                              (in units of psi_n, positive shifts profiles outward so separatrix is hotter)
           reduce_Ti_fileloc: Location of a saved array to get the ratio between T_C (measured) and T_i
-                        This ratio was calculated from Shaun Haskey's T_D measurements
-                        for 171558 @ 3200 ms
-                        Set to None to use Ti from CER C+6
+                        Example file on GA clusters for DIII-D, calculated from Shaun Haskey's T_D measurements
+                        for 171558 @ 3200 ms:
+                        '/fusion/projects/results/solps-iter-results/wilcoxr/T_D_C_ratio.txt'
           vrc_mag:      Magnetude of the carbon velocity pinch
                         (shape and position are still hard coded)
         """
@@ -747,7 +811,8 @@ class SOLPSxport:
         keold = self.data['solpsData']['last10']['ke']
         tiold = self.data['solpsData']['last10']['ti']
         kiold = self.data['solpsData']['last10']['ki']
-        if self.data['carbon']:
+
+        if self.data['impurities']:
             ndold = self.data['solpsData']['profiles']['nD']
         else:
             ndold = neold
@@ -769,8 +834,8 @@ class SOLPSxport:
         
         # ne and Gamma_e
 
-        psi_data_fit = self.data['pedData']['fitPsiProf']
-        neexp = 1.0e20 * self.data['pedData']['fitProfs']['neprof']
+        psi_data_fit = self.data['expData']['fitPsiProf'] + exp_prof_rad_shift
+        neexp = 1.0e20 * self.data['expData']['fitProfs']['neprof']
         
         dsa_TSprofile = psi_to_dsa_func(psi_data_fit)
 
@@ -807,7 +872,7 @@ class SOLPSxport:
 
         # Te and ke
         
-        teexp = 1.0e3 * self.data['pedData']['fitProfs']['teprof']
+        teexp = 1.0e3 * self.data['expData']['fitProfs']['teprof']
         
         gteold = np.gradient(teold) / np.gradient(dsa)
         gteexp = np.gradient(teexp) / np.gradient(dsa_TSprofile)
@@ -832,7 +897,7 @@ class SOLPSxport:
             kenew_ratio[-1] = keold[-1] * teold[-1] / expTe_dsa_func(dsa[-1])
             kenew_flux[-1] = keold[-1] * teold[-1] / expTe_dsa_func(dsa[-1])
 
-        kenew_ratio[0] = kenew_ratio[1]   # gaurd cells
+        kenew_ratio[0] = kenew_ratio[1]   # guard cells
         kenew_flux[0] = kenew_flux[1]
         
         # Ti and ki
@@ -842,12 +907,12 @@ class SOLPSxport:
                            decay_length = ti_decay_len, rad_loc_for_exp_decay = 1.0,
                            plotit = debug_plots, reduce_ti = (reduce_Ti_fileloc is not None))
 
-            tiexp = 1.0e3*self.data['pedData']['fitVals']['ti_mod']['y']
-            tiexppsi = self.data['pedData']['fitVals']['ti_mod']['x']
+            tiexp = 1.0e3*self.data['expData']['fitProfs']['ti_mod']
+            tiexppsi = self.data['expData']['fitProfs']['ti_mod_psi']
 
         else:
-            tiexp = 1.0e3*self.data['pedData']['fitVals']['tisplpsi']['y']
-            tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+            tiexp = 1.0e3*self.data['expData']['fitProfs']['tiprof']
+            tiexppsi = self.data['expData']['fitProfs']['tipsi']
         
         dsa_tiprofile = psi_to_dsa_func(tiexppsi)
         
@@ -876,8 +941,15 @@ class SOLPSxport:
 
         kinew_ratio[0] = kinew_ratio[1]   # gaurd cells
         kinew_flux[0] = kinew_flux[1]
-        
-        
+
+        if fractional_change != 1:
+            dnew_ratio = dnew_ratio * fractional_change + dold * (1 - fractional_change)
+            dnew_flux = dnew_flux * fractional_change + dold * (1 - fractional_change)
+            kenew_ratio = kenew_ratio * fractional_change + keold * (1 - fractional_change)
+            kenew_flux = kenew_flux * fractional_change + keold * (1 - fractional_change)
+            kinew_ratio = kinew_ratio * fractional_change + kiold * (1 - fractional_change)
+            kinew_flux = kinew_flux * fractional_change + kiold * (1 - fractional_change)
+
         # Apply constraints
         
         dnew_ratio[dnew_ratio < Dn_min] = Dn_min
@@ -896,8 +968,8 @@ class SOLPSxport:
         
         
         # Carbon transport coefficients
-        
-        if self.data['carbon']:
+
+        if 'c' in self.data['impurities']:
             # vrc_mag = 20.0  # 60 for gauss
             vr_pos = 0.97
             # vr_wid = 0.02
@@ -907,10 +979,12 @@ class SOLPSxport:
             vr_shape = psi_solps - vr_pos  # linear
             
             vr_carbon = vr_shape * vrc_mag / max(vr_shape)
-        
-            D_carbon = Dn_min + 0.0 * dnew_flux
+
+            # default to C diffusion being the same as main ion
+            # D_carbon = Dn_min + 0.0 * dnew_flux
             # D_carbon[19:] = dnew_flux[19:]
-            D_carbon[1:] = dnew_flux[1:]
+            # D_carbon[1:] = dnew_flux[1:]
+            D_carbon = None
                     
         else:
             vr_carbon = None
@@ -926,7 +1000,7 @@ class SOLPSxport:
                                                'vr_carbon': vr_carbon, 'D_carbon': D_carbon,
                                                'limits': coef_limits}
         if plotit:
-            self.plotXportCoef(figblock = figblock)
+            self.plotXportCoef(figblock=figblock, plot_Ti = not chii_eq_chie)
 
         if debug_plots:
             plt.figure()
@@ -939,14 +1013,14 @@ class SOLPSxport:
             plt.legend(loc='best')
 
             plt.figure()
-            plt.plot(tiexppsi, 1.0e3 * self.data['pedData']['fitVals']['tisplpsi']['y'],
+            plt.plot(tiexppsi, 1.0e3 * self.data['expData']['fitProfs']['tiprof'],
                      'k', lw=2, label='Ti measured')
             plt.plot(tiexppsi, tiexp, 'r', label='Ti_new')
             plt.xlabel('$\psi_N$')
             plt.ylabel('T$_i$ (keV)')
             plt.legend(loc='best')
 
-            if self.data['carbon']:
+            if 'c' in self.data['impurities']:
                 plt.figure()
                 plt.plot(psi_solps, dnew_ratio, '-or', label='dnew_ratio')
                 plt.plot(psi_solps, dnew_flux, '-ob', label='dnew_flux')
@@ -957,7 +1031,37 @@ class SOLPSxport:
 
     # ----------------------------------------------------------------------------------------
 
-    def plotXportCoef(self, figblock=False):
+    def flatSOLcoeffs(self, prof_choice, psin_start, coef_val, plotit=False, figblock = False):
+        """
+        Manually change transport coefficients outside of some position to a specified value
+        Useful if profile flattens (e.g., a density shoulder) and a precise match is difficult or unnecessary
+
+        Inputs:
+          prof_choice    Choose from 'd' (particle diffusivity), 'ke' (electron thermal diffusivity),
+                         or 'ki' (ion thermal diffusivity)
+          psin_start     Starting position to set the flat coefficients (goes outward from here)
+
+        """
+        if prof_choice.lower() not in ['d', 'ke', 'ki']:
+            print('WARNING: invalid choice for diffusion coefficient to set in SOL')
+            print('  you selected: ' + prof_choice)
+            print('  available options: "d" (particle diffusivity), "ke" (electron thermal diffusivity),' +
+                  ' or "ki" (ion thermal diffusivity)')
+            return
+
+        psi_solps = self.data['solpsData']['psiSOLPS']
+        ratio_key = prof_choice.lower() + 'new_ratio'
+        flux_key = prof_choice.lower() + 'new_flux'
+
+        self.data['solpsData']['xportCoef'][ratio_key][psi_solps > psin_start] = coef_val
+        self.data['solpsData']['xportCoef'][flux_key][psi_solps > psin_start] = coef_val
+
+        if plotit:
+            self.plotXportCoef(plot_Ti=(prof_choice.lower() == 'ki'), figblock=figblock)
+
+    # ----------------------------------------------------------------------------------------
+
+    def plotXportCoef(self, figblock=False, figsize=(14,7), plot_Ti = False):
         """
         Plot the upstream profiles from SOLPS compared to the experiment
         along with the corresponding updated transport coefficients
@@ -971,16 +1075,16 @@ class SOLPSxport:
         kinew_flux = self.data['solpsData']['xportCoef']['kinew_flux']
         coef_limits = self.data['solpsData']['xportCoef']['limits']
 
-        psi_data_fit = self.data['pedData']['fitPsiProf']
-        neexp = 1.0e20 * self.data['pedData']['fitProfs']['neprof']
-        teexp = 1.0e3 * self.data['pedData']['fitProfs']['teprof']
-        if 'ti_mod' in self.data['pedData']['fitVals'].keys():
-            tiexp = 1.0e3*self.data['pedData']['fitVals']['ti_mod']['y']
-            tiexppsi = self.data['pedData']['fitVals']['ti_mod']['x']
-        else:
-            tiexppsi = self.data['pedData']['fitVals']['tisplpsi']['x']
-            tiexp = 1.0e3*self.data['pedData']['fitVals']['tisplpsi']['y']
+        psi_data_fit = self.data['expData']['fitPsiProf']
+        neexp = 1.0e20 * self.data['expData']['fitProfs']['neprof']
+        teexp = 1.0e3 * self.data['expData']['fitProfs']['teprof']
 
+        if 'ti_mod' in self.data['expData']['fitProfs'].keys():
+            tiexp = 1.0e3*self.data['expData']['fitProfs']['ti_mod']
+            tiexppsi = self.data['expData']['fitProfs']['ti_mod_psi']
+        else:
+            tiexppsi = self.data['expData']['fitProfs']['tipsi']
+            tiexp = 1.0e3*self.data['expData']['fitProfs']['tiprof']
 
         psi_solps = self.data['solpsData']['psiSOLPS']
         neold = self.data['solpsData']['last10']['ne']
@@ -1008,17 +1112,22 @@ class SOLPSxport:
         headroom = 1.05
         xlims = [np.min(psi_solps) - 0.01, np.max(psi_solps) + 0.01]
 
-        f, ax = plt.subplots(2, 3, sharex = 'all')
+        if plot_Ti:
+            nplots = 3
+        else:
+            nplots = 2
+
+        f, ax = plt.subplots(2, nplots, sharex = 'all', figsize=figsize)
         ax[0, 0].plot(psi_data_fit, neexp / 1.0e19, '--bo', lw = 1, label = 'TS data')
         ax[0, 0].plot(psi_solps, neold / 1.0e19, 'xr', lw = 2, label = 'SOLPS')
         ax[0, 0].set_ylabel('n$_e$ (10$^{19}$ m$^{-3}$)')
-        ax[0, 0].legend(loc = 'best', fontsize=14)
+        ax[0, 0].legend(loc = 'best', fontsize=12)
         ax[0, 0].set_ylim([0, max_ne*headroom])
         ax[0, 0].grid('on')
 
-        ax[1, 0].semilogy(psi_solps, dnew_flux, '-ok', lw = 2, label = 'updated (fluxes)')
-        ax[1, 0].semilogy(psi_solps, dnew_ratio, '-+c', lw = 1, label = 'updated (gradients)')
-        ax[1, 0].semilogy(psi_solps, dold, '-xr', lw = 2, label = 'old')
+        ax[1, 0].semilogy(psi_solps, dnew_flux, '-ok', lw = 2, label = 'Updated (fluxes)')
+        ax[1, 0].semilogy(psi_solps, dnew_ratio, '-+c', lw = 1, label = 'Updated (gradients)')
+        ax[1, 0].semilogy(psi_solps, dold, '-xr', lw = 2, label = 'SOLPS input')
         if coef_limits['Dn_min'] is not None:
             ax[1, 0].semilogy(xlims, [coef_limits['Dn_min'], coef_limits['Dn_min']], '--m')
         if coef_limits['Dn_max'] is not None:
@@ -1028,7 +1137,7 @@ class SOLPSxport:
         ax[1, 0].set_ylim([min_dn/np.sqrt(headroom), max_dn*headroom])
         ax[1, 0].grid('on')
 
-        ax[0, 1].plot(psi_data_fit, teexp / 1.0e3, '--bo', lw = 1, label = 'Data')
+        ax[0, 1].plot(psi_data_fit, teexp / 1.0e3, '--bo', lw = 1, label = 'TS Data')
         ax[0, 1].plot(psi_solps, teold / 1.0e3, 'xr', lw = 2, label = 'SOLPS')
         ax[0, 1].set_ylabel('T$_e$ (keV)')
         ax[0, 1].set_ylim([0, max_Te*headroom])
@@ -1036,9 +1145,9 @@ class SOLPSxport:
         if self.data['workdir_short'] is not None:
             ax[0, 1].set_title(self.data['workdir_short'], fontsize=10)
 
-        ax[1, 1].semilogy(psi_solps, kenew_flux, '-ok', lw = 2, label = 'updated (fluxes)')
-        ax[1, 1].semilogy(psi_solps, kenew_ratio, '-+c', lw = 1, label = 'updated (gradients)')
-        ax[1, 1].semilogy(psi_solps, keold, '-xr', lw = 2, label = 'old')
+        ax[1, 1].semilogy(psi_solps, kenew_flux, '-ok', lw = 2, label = 'Updated (fluxes)')
+        ax[1, 1].semilogy(psi_solps, kenew_ratio, '-+c', lw = 1, label = 'Updated (gradients)')
+        ax[1, 1].semilogy(psi_solps, keold, '-xr', lw = 2, label = 'SOLPS input')
         if coef_limits['chie_min'] is not None:
             ax[1, 1].semilogy(xlims, [coef_limits['chie_min'], coef_limits['chie_min']], '--m')
         if coef_limits['chie_max'] is not None:
@@ -1049,27 +1158,29 @@ class SOLPSxport:
         ax[1, 1].set_ylim([min_ke/np.sqrt(headroom), max_ke*headroom])
         ax[1, 1].grid('on')
 
-        ax[0, 2].plot(psi_solps, tiold / 1.0e3, 'xr', lw = 2, label = 'SOLPS')
-        ax[0, 2].plot(tiexppsi, tiexp / 1.0e3, '--bo', lw = 1, label = 'Data')
-        ax[0, 2].set_ylabel('T$_i$ (keV)')
-        ax[0, 2].set_ylim([0, max_Ti*headroom])
-        ax[0, 2].grid('on')
+        if plot_Ti:
+            ax[0, 2].plot(psi_solps, tiold / 1.0e3, 'xr', lw = 2, label = 'SOLPS')
+            ax[0, 2].plot(tiexppsi, tiexp / 1.0e3, '--bo', lw = 1, label = 'Exp. Data')
+            ax[0, 2].set_ylabel('T$_i$ (keV)')
+            ax[0, 2].set_ylim([0, max_Ti*headroom])
+            ax[0, 2].grid('on')
 
-        ax[1, 2].semilogy(psi_solps, kinew_flux, '-ok', lw = 2, label = 'updated (fluxes)')
-        ax[1, 2].semilogy(psi_solps, kinew_ratio, '-+c', lw = 1, label = 'updated (gradients)')
-        ax[1, 2].semilogy(psi_solps, kiold, '-xr', lw = 2, label = 'old')
-        if coef_limits['chii_min'] is not None:
-            ax[1, 2].semilogy(xlims, [coef_limits['chii_min'], coef_limits['chii_min']], '--m')
-        if coef_limits['chii_max'] is not None:
-            ax[1, 2].semilogy(xlims, [coef_limits['chii_max'], coef_limits['chii_max']], '--m')
-        ax[1, 2].set_ylabel('$\chi_i$ (m$^2$/s)')
-        ax[1, 2].set_xlabel('$\psi_N$')
-        ax[1, 2].set_xlim(xlims)
-        ax[1, 2].set_ylim([min_ki/np.sqrt(headroom), max_ki*headroom])
-        ax[1, 2].grid('on')
-        ax[1, 2].legend(loc='best', fontsize=12)
+            ax[1, 2].semilogy(psi_solps, kinew_flux, '-ok', lw = 2, label = 'Updated (fluxes)')
+            ax[1, 2].semilogy(psi_solps, kinew_ratio, '-+c', lw = 1, label = 'Updated (gradients)')
+            ax[1, 2].semilogy(psi_solps, kiold, '-xr', lw = 2, label = 'SOLPS input')
+            if coef_limits['chii_min'] is not None:
+                ax[1, 2].semilogy(xlims, [coef_limits['chii_min'], coef_limits['chii_min']], '--m')
+            if coef_limits['chii_max'] is not None:
+                ax[1, 2].semilogy(xlims, [coef_limits['chii_max'], coef_limits['chii_max']], '--m')
+            ax[1, 2].set_ylabel('$\chi_i$ (m$^2$/s)')
+            ax[1, 2].set_xlabel('$\psi_N$')
+            ax[1, 2].set_xlim(xlims)
+            ax[1, 2].set_ylim([min_ki/np.sqrt(headroom), max_ki*headroom])
+            ax[1, 2].grid('on')
 
-        ax[0, 0].set_xticks(np.arange(0.84, 1.05, 0.04))
+        ax[1, -1].legend(loc='best', fontsize=10)
+        if xlims[0] > 0.8:
+            ax[0, 0].set_xticks(np.arange(0.84, 1.05, 0.04))
         ax[0, 0].set_xlim(xlims)
         plt.tight_layout()
 
@@ -1091,11 +1202,11 @@ class SOLPSxport:
         
         # Load experimental profiles
 
-        psi_data_fit = self.data['pedData']['fitPsiProf']
-        nefit = 1.0e20 * self.data['pedData']['fitProfs']['neprof']
-        tefit = self.data['pedData']['fitProfs']['teprof']
-        tifit = self.data['pedData']['fitVals']['tisplpsi']['y']
-        tifitpsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+        psi_data_fit = self.data['expData']['fitPsiProf']
+        nefit = 1.0e20 * self.data['expData']['fitProfs']['neprof']
+        tefit = self.data['expData']['fitProfs']['teprof']
+        tifit = self.data['expData']['fitProfs']['tiprof']
+        tifitpsi = self.data['expData']['fitProfs']['tipsi']
 
         rawdat_keys = ['nedatpsi', 'tedatpsi']
         rawdat_scalars = [10, 1.0]  # ne saved as 10^20, we want 10^19
@@ -1114,9 +1225,9 @@ class SOLPSxport:
         f, ax = plt.subplots(nprofs, sharex = 'all')
 
         for i in range(nprofs):
-            ax[i].errorbar(self.data['pedData']['fitVals'][rawdat_keys[i]]['x'],
-                           self.data['pedData']['fitVals'][rawdat_keys[i]]['y'] * rawdat_scalars[i],
-                           self.data['pedData']['fitVals'][rawdat_keys[i]]['yerr'] * rawdat_scalars[i],
+            ax[i].errorbar(self.data['expData']['fitVals'][rawdat_keys[i]]['x'],
+                           self.data['expData']['fitVals'][rawdat_keys[i]]['y'] * rawdat_scalars[i],
+                           self.data['expData']['fitVals'][rawdat_keys[i]]['yerr'] * rawdat_scalars[i],
                            xerr=None, fmt='o', ls='', c='k', mfc='None', mec='k',
                            zorder=1, label='Experimental Data')
 
@@ -1139,9 +1250,9 @@ class SOLPSxport:
             ax[2].plot(tifitpsi, tifit, '--k', lw = 2, zorder=3, label = 'Experimental Fit')
             ax[2].plot(psi_solps, tisolps, '-r', lw = 2, zorder=2, label = 'SOLPS')
 
-            if 'ti_mod' in self.data['pedData']['fitVals'].keys():
-                ax[2].plot(self.data['pedData']['fitVals']['ti_mod']['x'],
-                           self.data['pedData']['fitVals']['ti_mod']['y'],
+            if 'ti_mod' in self.data['expData']['fitProfs'].keys():
+                ax[2].plot(self.data['expData']['fitProfs']['ti_mod_psi'],
+                           self.data['expData']['fitProfs']['ti_mod'],
                            '--b', lw=2, zorder=4, label = 'Modified Ti fit')
             ax[2].set_ylabel('T$_i$ (keV)')
             ax[2].set_ylim([0, max_Ti * headroom])
@@ -1180,11 +1291,11 @@ class SOLPSxport:
 
         # Load experimental profiles
 
-        psi_data_fit = self.data['pedData']['fitPsiProf']
-        nefit = 1.0e20 * self.data['pedData']['fitProfs']['neprof']
-        tefit = self.data['pedData']['fitProfs']['teprof']
-        tifit = self.data['pedData']['fitVals']['tisplpsi']['y']
-        tifitpsi = self.data['pedData']['fitVals']['tisplpsi']['x']
+        psi_data_fit = self.data['expData']['fitPsiProf']
+        nefit = 1.0e20 * self.data['expData']['fitProfs']['neprof']
+        tefit = self.data['expData']['fitProfs']['teprof']
+        tifit = self.data['expData']['fitProfs']['tiprof']
+        tifitpsi = self.data['expData']['fitProfs']['tipsi']
 
         rawdat_keys = ['nedatpsi', 'tedatpsi']
         rawdat_scalars = [10, 1.0]  # ne saved as 10^20, we want 10^19
@@ -1194,16 +1305,16 @@ class SOLPSxport:
         nprofs = len(rawdat_keys)
 
         # Find limits of Te, Ti for plots
-        TS_inds_in_range = np.where((self.data['pedData']['fitVals']['nedatpsi']['x'] > np.min(psi_solps)) &
-                                    (self.data['pedData']['fitVals']['nedatpsi']['x'] < np.max(psi_solps)))[0]
-        Ti_inds_in_range = np.where((self.data['pedData']['fitVals']['tidatpsi']['x'] > np.min(psi_solps)) &
-                                    (self.data['pedData']['fitVals']['tidatpsi']['x'] < np.max(psi_solps)))[0]
-        max_raw_ne = np.max(self.data['pedData']['fitVals']['nedatpsi']['y'][TS_inds_in_range] +
-                            self.data['pedData']['fitVals']['nedatpsi']['yerr'][TS_inds_in_range])
-        max_raw_te = np.max(self.data['pedData']['fitVals']['tedatpsi']['y'][TS_inds_in_range] +
-                            self.data['pedData']['fitVals']['tedatpsi']['yerr'][TS_inds_in_range])
-        max_raw_ti = np.max(self.data['pedData']['fitVals']['tidatpsi']['y'][Ti_inds_in_range] +
-                            self.data['pedData']['fitVals']['tidatpsi']['yerr'][Ti_inds_in_range])
+        TS_inds_in_range = np.where((self.data['expData']['fitVals']['nedatpsi']['x'] > np.min(psi_solps)) &
+                                    (self.data['expData']['fitVals']['nedatpsi']['x'] < np.max(psi_solps)))[0]
+        Ti_inds_in_range = np.where((self.data['expData']['fitVals']['tidatpsi']['x'] > np.min(psi_solps)) &
+                                    (self.data['expData']['fitVals']['tidatpsi']['x'] < np.max(psi_solps)))[0]
+        max_raw_ne = np.max(self.data['expData']['fitVals']['nedatpsi']['y'][TS_inds_in_range] +
+                            self.data['expData']['fitVals']['nedatpsi']['yerr'][TS_inds_in_range])
+        max_raw_te = np.max(self.data['expData']['fitVals']['tedatpsi']['y'][TS_inds_in_range] +
+                            self.data['expData']['fitVals']['tedatpsi']['yerr'][TS_inds_in_range])
+        max_raw_ti = np.max(self.data['expData']['fitVals']['tidatpsi']['y'][Ti_inds_in_range] +
+                            self.data['expData']['fitVals']['tidatpsi']['yerr'][Ti_inds_in_range])
         max_ne = np.max([np.max(nesolps) / 1.0e19, max_raw_ne *10])
         max_Te = np.max([np.max(tesolps), max_raw_te])
         max_Ti = np.max([np.max(tisolps), max_raw_ti])
@@ -1212,9 +1323,9 @@ class SOLPSxport:
         f, ax = plt.subplots(2, nprofs, sharex='all')
 
         for i in range(nprofs):
-            ax[0, i].errorbar(self.data['pedData']['fitVals'][rawdat_keys[i]]['x'],
-                              self.data['pedData']['fitVals'][rawdat_keys[i]]['y'] * rawdat_scalars[i],
-                              self.data['pedData']['fitVals'][rawdat_keys[i]]['yerr'] * rawdat_scalars[i],
+            ax[0, i].errorbar(self.data['expData']['fitVals'][rawdat_keys[i]]['x'],
+                              self.data['expData']['fitVals'][rawdat_keys[i]]['y'] * rawdat_scalars[i],
+                              self.data['expData']['fitVals'][rawdat_keys[i]]['yerr'] * rawdat_scalars[i],
                               xerr=None, fmt='o', ls='', c='k', mfc='None', mec='k',
                               zorder=1, label='Experimental Data')
 
@@ -1241,10 +1352,10 @@ class SOLPSxport:
             ax[0, 2].plot(psi_solps, tisolps, '-r', lw=2, zorder=2, label = 'SOLPS')
             ax[0, 2].plot(tifitpsi, tifit, '--k', lw=2, zorder=3, label='Experimental Fit')
 
-            if 'ti_mod' in self.data['pedData']['fitVals'].keys():
-                ax[0, 2].plot(self.data['pedData']['fitVals']['ti_mod']['x'],
-                              self.data['pedData']['fitVals']['ti_mod']['y'],
-                              '--b', mew=2, zorder=4, label='Modified Ti fit')
+            if 'ti_mod' in self.data['expData']['fitProfs'].keys():
+                ax[0, 2].plot(self.data['expData']['fitProfs']['ti_mod_psi'],
+                              self.data['expData']['fitProfs']['ti_mod'],
+                              '--b', lw=2, zorder=4, label='Modified Ti fit')
             ax[0, 2].set_ylabel('T$_i$ (keV)')
             ax[0, 2].set_ylim([0, max_temp * headroom])
             ax[0, 2].set_yticks(np.arange(0, max_temp * headroom + 0.2, 0.2))
@@ -1265,165 +1376,193 @@ class SOLPSxport:
 
     # ----------------------------------------------------------------------------------------
     
-    def writeXport(self, new_filename = 'b2.transport.inputfile_new', solps5_0 = False,
-                   scale_D = 1, ke_use_grad = False, ki_use_grad = False):
+    def writeXport(self, new_filename = 'b2.transport.inputfile_new', fractional_change = 1, solps5_0 = False,
+                   scale_D = 1, chie_use_grad = False, chii_use_grad = False, chii_eq_chie = False):
         """
         Write the b2.transport.inputfile using values saved in this object
+        SOLPS5.0 was deprecated, need to modify this code if you want to write to runs that old
 
         Inputs:
+          fractional_change  Set to number smaller than 1 if the incremental change is too large and
+                             you want to take a half step or something different
           ke/i_use_grad      Use ratio of the gradients for new values of chi_i/e
           scale_D            Scalar factor to modify all particle diffusion coefficients
                              (when going from density BC to flux BC, need to reduce the transport by a
                              factor proportional to the difference in core flux between the two cases)
+          chii_eq_chie       Set chi_i = chi_e, if ion data is bad or non-existent (default = False)
         """
-        
+        # dictionary defining number of electrons for possible impurity species
+        n_electrons = {'he':2, 'li':3, 'be':4, 'b':5, 'c':6, 'n':7, 'ne':10, 'ar':18, 'kr':36, 'w':74}
+
+        species_nums = [1]  # indeces of all plasma species (0 is fluid neutral D, 1 is D+)
+        next_species = 3  # Exclude fluid neutrals (0, 2, 9, ...)
+
+        for imp in self.data['impurities']:  # append list of plasma species indeces with all included impurities
+            species_nums = species_nums + list(range(next_species, next_species + n_electrons[imp]))
+            next_species += n_electrons[imp] + 1  # exclude fluid neutrals
+
         wdir = self.data['workdir']
         inFile = os.path.join(wdir, new_filename)
         if os.path.isfile(inFile):
             print("'" + new_filename + "' already exists, renaming existing " +
                   "file to 'old_xport_coef' and writing new one")
-            movedFile = os.path.join(wdir, 'old_xport_coef')
-            cmds = 'cp ' + inFile + ' ' + movedFile
+            movedfile = os.path.join(wdir, 'old_xport_coef')
+            cmds = 'cp ' + inFile + ' ' + movedfile
             os.system(cmds)
         
         rn = self.data['solpsData']['last10']['rx']
         dn = self.data['solpsData']['xportCoef']['dnew_flux'] * scale_D
-        if ke_use_grad:
+        if chie_use_grad:
             ke = self.data['solpsData']['xportCoef']['kenew_ratio']
         else:
             ke = self.data['solpsData']['xportCoef']['kenew_flux']
-        if ki_use_grad:
-            ki = self.data['solpsData']['xportCoef']['kinew_ratio']
+
+        if chii_eq_chie:
+            ki = ke
         else:
-            ki = self.data['solpsData']['xportCoef']['kinew_flux']
+            if chii_use_grad:
+                ki = self.data['solpsData']['xportCoef']['kinew_ratio']
+            else:
+                ki = self.data['solpsData']['xportCoef']['kinew_flux']
+
         vrc = self.data['solpsData']['xportCoef']['vr_carbon']
-        dc = self.data['solpsData']['xportCoef']['D_carbon'] * scale_D
-        carbon = self.data['carbon']
+
+        # Default is that dc = dn
+        if self.data['solpsData']['xportCoef']['D_carbon'] is None:
+            dc = dn
+        else:
+            dc = self.data['solpsData']['xportCoef']['D_carbon'] * scale_D
         
         # Step the boundary points out a tiny bit so that they are
         # interpolated onto the SOLPS grid correctly
-        delta_step = 0.0001*np.min(np.abs(np.diff(rn)))
+        delta_step = 0.1*np.min(np.abs(np.diff(rn)))
         
         # Remove any small negative diffusivities and throw a warning
         
         for i in range(len(rn)):
             if dn[i] < 0:
+                print('Negative diffusivity calculated! Modifying to a small positive number')
                 print('dn[{}] = {:e}'.format(i,dn[i]))
                 print('  Changed to dn[{}] = {:e}'.format(i,-dn[i]*1e-5))
                 dn[i] = -dn[i] * 1e-5
             if ke[i] < 0:
+                print('Negative thermal diffusivity calculated! Modifying to a small positive number')
                 print('ke[{}] = {:e}'.format(i,ke[i]))
                 print('  Changed to ke[{}] = {:e}'.format(i,-ke[i]*1e-2))
                 ke[i] = -ke[i] * 1e-2
             if ki[i] < 0:
+                print('Negative thermal diffusivity calculated! Modifying to a small positive number')
                 print('ki[{}] = {:e}'.format(i,ki[i]))
                 print('  Changed to ki[{}] = {:e}'.format(i,-ki[i]*1e-2))
                 ki[i] = -ki[i] * 1e-2
+
+        # Take a smaller step if requested
+
+        if fractional_change != 1:
+            dold = self.data['solpsData']['last10']['dn']
+            keold = self.data['solpsData']['last10']['ke']
+            kiold = self.data['solpsData']['last10']['ki']
+
+            dn = dn * fractional_change + dold * (1 - fractional_change)
+            ke = ke * fractional_change + keold * (1 - fractional_change)
+            ki = ki * fractional_change + kiold * (1 - fractional_change)
         
         inlines = list()
         
         if solps5_0:
+            print('WARNING: SOLPS5.0 is not supported with this version of the code')
+
+            """
             inlines.append('&TRANSPORT\n')
             inlines.append('ndata( 1, 1, 1) = {} ,\n'.format(len(rn)+2))
             inlines.append("tdata(1, 1, 1, 1) = {:e} , tdata(2, 1, 1, 1) = {:e} ,\n".format(rn[0]-0.005, dn[0]))
             for i in range(len(rn)):
                 inlines.append("tdata(1, {}, 1, 1) = {:e} , tdata(2, {}, 1, 1) = {:e} ,\n".format(i + 2, rn[i], i + 2, dn[i]))
             inlines.append("tdata(1, {}, 1, 1) = {:e} , tdata(2, {}, 1, 1) = {:e} ,\n".format(len(rn)+2, rn[-1] + 0.005, len(rn)+2, dn[-1]))
-    
+
             if carbon:
                 inlines.append('ndata( 1, 1, 3) = {} ,\n'.format(len(rn)+2))
                 inlines.append("tdata(1, 1, 1, 3) = {:e} , tdata(2, 1, 1, 3) = {:e} ,\n".format(rn[0]-0.005, dn[0]))
                 for i in range(len(rn)):
                     inlines.append("tdata(1, {}, 1, 3) = {:e} , tdata(2, {}, 1, 3) = {:e} ,\n".format(i + 2, rn[i], i + 2, dn[i]))
                 inlines.append("tdata(1, {}, 1, 3) = {:e} , tdata(2, {}, 1, 3) = {:e} ,\n".format(len(rn)+2, rn[-1] + 0.005, len(rn)+2, dn[-1]))
-        
+
                 for j in range(4, 10):
                     inlines.append('ndata( 1, 1, {}) = {} ,\n'.format(j, len(rn)+2))
                     inlines.append("tdata(1, 1, 1, {}) = {:e} , tdata(2, 1, 1, {}) = {:e} ,\n".format(j, rn[0]-0.005, j, dn[0]))
                     for i in range(len(rn)):
                         inlines.append("tdata(1, {}, 1, {}) = {:e} , tdata(2, {}, 1, {}) = {:e} ,\n".format(i + 2, j, rn[i], i + 2, j,dc[i]))
                     inlines.append("tdata(1, {}, 1, {}) = {:e} , tdata(2, {}, 1, {}) = {:e} ,\n".format(len(rn) + 2, j, rn[-1] + 0.005, len(rn) + 2, j,dc[-1]))
-        
+
                 for j in range(3, 10):
                     inlines.append('ndata( 1, 6, {}) = {} ,\n'.format(j, len(rn)+2))
                     inlines.append("tdata(1, 1, 6, {}) = {:e} , tdata(2, 1, 6, {}) = {:e} ,\n".format(j, rn[0]-0.005, j, vrc[0]))
                     for i in range(len(rn)):
                         inlines.append("tdata(1, {}, 6, {}) = {:e} , tdata(2, {}, 6, {}) = {:e} ,\n".format(i + 2, j, rn[i], i + 2, j,vrc[i]))
                     inlines.append("tdata(1, {}, 6, {}) = {:e} , tdata(2, {}, 6, {}) = {:e} ,\n".format(len(rn)+2, j, rn[-1]+0.005, len(rn) + 2, j, vrc[-1]))
-    
+
             # Heat fluxes
-    
+
             inlines.append('ndata( 1, 3, 1) = {} ,\n'.format(len(rn)+2))
             inlines.append("tdata(1, 1, 3, 1) = {:e} , tdata(2, 1, 3, 1) = {:e} ,\n".format(rn[0]-0.005, ke[0]))
             for i in range(len(rn)):
                 inlines.append("tdata(1, {}, 3, 1) = {:e} , tdata(2, {}, 3, 1) = {:e} ,\n".format(i + 2, rn[i], i + 2, ke[i]))
             inlines.append("tdata(1, {}, 3, 1) = {:e} , tdata(2, {}, 3, 1) = {:e} ,\n".format(len(rn)+2, rn[-1] + 0.005, len(rn)+2, ke[-1]))
-    
+
             inlines.append('ndata( 1, 4, 1) = {} ,\n'.format(len(rn)+2))
             inlines.append("tdata(1, 1, 4, 1) = {:e} , tdata(2, 1, 4, 1) = {:e} ,\n".format(rn[0]-0.005, ki[0]))
             for i in range(len(rn)):
                 inlines.append("tdata(1, {}, 4, 1) = {:e} , tdata(2, {}, 4, 1) = {:e} ,\n".format(i + 2, rn[i], i + 2, ki[i]))
             inlines.append("tdata(1, {}, 4, 1) = {:e} , tdata(2, {}, 4, 1) = {:e} ,\n".format(len(rn)+2, rn[-1] + 0.005, len(rn)+2, ki[-1]))
-            
-        else:
-        
-            inlines.append('&TRANSPORT\n')
-            inlines.append('ndata( 1, 1, 1) = {} ,\n'.format(len(rn)))
-            inlines.append("tdata(1, 1, 1, 1) = {:e} , tdata(2, 1, 1, 1) = {:e} ,\n".format(rn[0]-delta_step, dn[0]))
-            for i in range(len(rn)-2):
-                inlines.append("tdata(1, {}, 1, 1) = {:e} , tdata(2, {}, 1, 1) = {:e} ,\n".format(i+2,rn[i+1],i+2,dn[i+1]))
-            inlines.append("tdata(1, {}, 1, 1) = {:e} , tdata(2, {}, 1, 1) = {:e} ,\n".format(len(rn), rn[-1]+delta_step, len(rn), dn[-1]))
-            
-    
-            if carbon:
-                inlines.append('ndata( 1, 1, 3) = {} ,\n'.format(len(rn)))
-                inlines.append("tdata(1, 1, 1, 3) = {:e} , tdata(2, 1, 1, 3) = {:e} ,\n".format(rn[0]-delta_step, dn[0]))
-                for i in range(len(rn)-2):
-                    inlines.append("tdata(1, {}, 1, 3) = {:e} , tdata(2, {}, 1, 3) = {:e} ,\n".format(i+2, rn[i+1], i+2, dn[i+1]))
-                inlines.append("tdata(1, {}, 1, 3) = {:e} , tdata(2, {}, 1, 3) = {:e} ,\n".format(len(rn), rn[-1]+delta_step, len(rn), dn[-1]))
-                
-                for j in range(4, 10):
-                    inlines.append('ndata( 1, 1, {}) = {} ,\n'.format(j, len(rn)))
-                    inlines.append("tdata(1, 1, 1, {}) = {:e} , tdata(2, 1, 1, {}) = {:e} ,\n".format(j, rn[0]-delta_step, j, dc[0]))
-                    for i in range(len(rn)-2):
-                        inlines.append("tdata(1, {}, 1, {}) = {:e} , tdata(2, {}, 1, {}) = {:e} ,\n".format(i+2, j, rn[i+1], i+2, j, dc[i+1]))
-                    inlines.append("tdata(1, {}, 1, {}) = {:e} , tdata(2, {}, 1, {}) = {:e} ,\n".format(len(rn), j, rn[-1]+delta_step, len(rn),j,dc[-1]))
-    
-                for j in range(3, 10):
-                    inlines.append('ndata( 1, 6, {}) = {} ,\n'.format(j, len(rn)))
-                    inlines.append("tdata(1, 1, 6, {}) = {:e} , tdata(2, 1, 6, {}) = {:e} ,\n".format(j, rn[0]-delta_step, j, vrc[0]))
-                    for i in range(len(rn)-2):
-                        inlines.append("tdata(1, {}, 6, {}) = {:e} , tdata(2, {}, 6, {}) = {:e} ,\n".format(i+2, j, rn[i+1], i+2, j, vrc[i+1]))
-                    inlines.append("tdata(1, {}, 6, {}) = {:e} , tdata(2, {}, 6, {}) = {:e} ,\n".format(len(rn), j, rn[-1]+delta_step, len(rn), j, vrc[-1]))
-                    
-            # Heat fluxes
-    
-            inlines.append('ndata( 1, 3, 1) = {} ,\n'.format(len(rn)))
-            inlines.append("tdata(1, 1, 3, 1) = {:e} , tdata(2, 1, 3, 1) = {:e} ,\n".format(rn[0]-delta_step, ki[0]))
-            for i in range(len(rn)-2):
-                inlines.append("tdata(1, {}, 3, 1) = {:e} , tdata(2, {}, 3, 1) = {:e} ,\n".format(i+2, rn[i+1], i+2, ki[i+1]))
-            inlines.append("tdata(1, {}, 3, 1) = {:e} , tdata(2, {}, 3, 1) = {:e} ,\n".format(len(rn), rn[-1]+delta_step, len(rn), ki[-1]))
-    
-            inlines.append('ndata( 1, 4, 1) = {} ,\n'.format(len(rn)))
-            inlines.append("tdata(1, 1, 4, 1) = {:e} , tdata(2, 1, 4, 1) = {:e} ,\n".format(rn[0]-delta_step, ke[0]))
-            for i in range(len(rn)-2):
-                inlines.append("tdata(1, {}, 4, 1) = {:e} , tdata(2, {}, 4, 1) = {:e} ,\n".format(i+2, rn[i+1], i+2, ke[i+1]))
-            inlines.append("tdata(1, {}, 4, 1) = {:e} , tdata(2, {}, 4, 1) = {:e} ,\n".format(len(rn), rn[-1]+delta_step, len(rn), ke[-1]))
+            """
 
-            # if carbon:
-            #     # Assign the same ion thermal diffusion coefficients (transport coefficient 3) from
-            #     # species 1 to all other ion species
-            #     # This seems to be incorrect, it breaks the reading
-            #     for i in range(2, 10):
-            #         inlines.append('addspec( {}, 3, 1) = {} ,\n'.format(i, i))
-        
-            
-        inlines.append('no_pflux = .true.\n')
-        inlines.append('/')
+        rn[0] -= delta_step
+        rn[-1] += delta_step
+
+        inlines.append('&TRANSPORT\n')
+        inlines.append('ndata( 1, 1, 1) = {} ,\n'.format(len(rn)))
+        for i in range(len(rn)):
+            inlines.append("tdata(1, {}, 1, 1) = {:e} , tdata(2, {}, 1, 1) = {:e} ,\n".format(i+1, rn[i], i+1, dn[i]))
+
+        if self.data['impurities']:
+
+            for j in species_nums[1:]:
+                inlines.append('ndata( 1, 1, {}) = {} ,\n'.format(j, len(rn)))
+                for i in range(len(rn)):
+                    inlines.append("tdata(1, {}, 1, {}) = {:e} , tdata(2, {}, 1, {}) = {:e} ,\n".format(i+1, j, rn[i], i+1, j, dc[i]))
+
+            # C pinch term to attempt to match CER nC+6
+            if np.any(vrc):
+                for j in species_nums[1:]:
+                    inlines.append('ndata( 1, 6, {}) = {} ,\n'.format(j, len(rn)))
+                    for i in range(len(rn)):
+                        inlines.append("tdata(1, {}, 6, {}) = {:e} , tdata(2, {}, 6, {}) = {:e} ,\n".format(i+1, j, rn[i], i+1, j, vrc[i]))
+
+        # Heat fluxes
+
+        for j in species_nums:
+            inlines.append('ndata( 1, 3, {}) = {} ,\n'.format(j, len(rn)))
+            for i in range(len(rn)):
+                inlines.append("tdata(1, {}, 3, {}) = {:e} , tdata(2, {}, 3, {}) = {:e} ,\n".format(i+1, j, rn[i], i+1, j, ki[i]))
+
+        inlines.append('ndata( 1, 4, 1) = {} ,\n'.format(len(rn)))
+        for i in range(len(rn)):
+            inlines.append("tdata(1, {}, 4, 1) = {:e} , tdata(2, {}, 4, 1) = {:e} ,\n".format(i+1, rn[i], i+1, ke[i]))
+
+        # if carbon:
+        #     # Ti is the same for all species, but n changes per species, so chi_i is set separately
+        #     # Assign the same ion thermal diffusion coefficients (transport coefficient 3) from
+        #     # species 1 to all other ion species
+        #     # This seems to be incorrect, it breaks the reading
+        #     for i in range(3, 9):
+        #         inlines.append('addspec( {}, 3, 1) = {} ,\n'.format(i, i))
+
+        inlines.append('no_pflux = .true.\n')  # Will use whatever is in b2.transport.parameters for PFR
+        inlines.append('/\n')
         
         # Write out file
         
-        with open(inFile,'w') as f:
+        with open(inFile, 'w') as f:
             for i in range(len(inlines)):
                 f.write(inlines[i])
 
