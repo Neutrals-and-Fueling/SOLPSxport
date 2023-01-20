@@ -76,11 +76,11 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
          profiles_fileloc=None, shotnum=None, ptimeid=None, prunid=None,
          nefit='tanh', tefit='tanh', ncfit='spl', chii_eq_chie = False, ti_eq_te = False,
          Dn_min=0.001, vrc_mag=0.0, ti_decay_len=0.015, Dn_max=200,
-         chie_use_grad = False, chii_use_grad = False, new_b2xportparams = True,
+         chie_use_grad = False, chii_use_grad = False, new_b2xportparams = False,
          chie_min = 0.01, chii_min = 0.01, chie_max = 400, chii_max = 400,
          reduce_Ti_fileloc = None,
          fractional_change = 1, exp_prof_rad_shift = 0,
-         impurity_list = ['c'], use_existing_last10=False, plot_xport_coeffs=True,
+         impurity_list = ['c'], use_existing_last10=True, plot_xport_coeffs=True,
          plotall=False, verbose=False, figblock=False):
     """
     Driver for the code, returns an object of class 'SOLPSxport'
@@ -166,8 +166,8 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
         xp.loadProfDBPedFit(profiles_fileloc, shotnum, ptimeid, prunid, verbose=True)
         print("Populating PedFits")
         xp.populatePedFits(nemod=nefit, temod=tefit, ncmod=ncfit, npsi=250, plotit=plotall)
-    # elif profiles_fileloc[:-5] == '.mast':
-    #     xp.readMastData(profiles_fileloc)
+    elif profiles_fileloc[-4:] == '.dat':
+        xp.readMastData(profiles_fileloc)
     else:
         print("Loading profiles from pfile")
         xp.load_pfile(profiles_fileloc, plotit=plotall)
