@@ -80,8 +80,8 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
          chie_min = 0.01, chii_min = 0.01, chie_max = 400, chii_max = 400,
          reduce_Ti_fileloc = None,
          fractional_change = 1, exp_prof_rad_shift = 0,
-         impurity_list = ['c'], use_existing_last10=True, plot_xport_coeffs=True,
-         plotall=False, verbose=False, figblock=False):
+         impurity_list = [], use_existing_last10=True, plot_xport_coeffs=True,
+         plotall=False, verbose=False, figblock=False, shift=1):
     """
     Driver for the code, returns an object of class 'SOLPSxport'
 
@@ -125,6 +125,7 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
       plotall           Produce a bunch more plots from the subroutines used in the process
       verbose           Set to True to print a lot more outputs to terminal
       figblock          Set to True if calling from command line and you want to see figures
+      shift             Set the amount of shifting the major radius
 
     Returns:
       Object of class 'SOLPSxport', which can then be used to plot, recall, or modify the saved data
@@ -149,7 +150,7 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
     print("Initializing SOLPSxport")
     xp = sxp.SOLPSxport(workdir=os.getcwd(), gfile_loc=gfile_loc, impurity_list=impurity_list)
     print("Running calcPsiVals")
-    xp.calcPsiVals(plotit=plotall)
+    xp.calcPsiVals(plotit=plotall, shift=shift)
     print("Running getSOLPSlast10Profs")
     xp.getSOLPSlast10Profs(plotit=plotall, use_existing_last10=use_existing_last10)
     # xp.getProfsOMFIT(prof_folder = prof_folder, prof_filename_prefix = prof_filename_prefix,
@@ -232,6 +233,7 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--tifileloc', help='File location for Ti/TD ratio; default = None', type=str, default=None)
     parser.add_argument('-f', '--fractional_change', help='Fractional change to transport coefficients; default = 1',
                         type=float, default=1)
+    parser.add_argument('-sh', '--shift', help='shift of major radius; default = 1', type=float, default=1)
     if py3_9:
         parser.add_argument('--chii_eq_chie', action='store_true', default=False)
         # parser.set_defaults(chii_eq_chie=False)
@@ -250,7 +252,7 @@ if __name__ == '__main__':
     _ = main(gfile_loc=args.gfileloc, profiles_fileloc=args.profilesloc,
              shotnum=args.shotnum, ptimeid=args.timeid, prunid=args.runid,
              chii_eq_chie=args.chii_eq_chie, chie_use_grad=args.chie_use_grad, chii_use_grad=args.chii_use_grad,
-             reduce_Ti_fileloc=args.tifileloc, fractional_change=args.fractional_change, figblock=True)
+             reduce_Ti_fileloc=args.tifileloc, fractional_change=args.fractional_change, figblock=True, shift=args.shift)
 
 # ----------------------------------------------------------------------------------------
 
