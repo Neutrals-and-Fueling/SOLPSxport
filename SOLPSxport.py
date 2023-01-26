@@ -555,7 +555,7 @@ class SOLPSxport:
 
     # ----------------------------------------------------------------------------------------
 
-    def calcPsiVals(self, plotit = False):
+    def calcPsiVals(self, plotit = False, shift=1):
         """
         Call b2plot to get the locations of each grid cell in psin space
 
@@ -592,6 +592,7 @@ class SOLPSxport:
         ncells = len(dummy)
 
         g = sut.loadg(self.data['gfile_loc'])
+        d = float(shift)
         psiN = (g['psirz'] - g['simag']) / (g['sibry'] - g['simag'])
 
         dR = g['rdim'] / (g['nw'] - 1)
@@ -599,7 +600,7 @@ class SOLPSxport:
 
         gR = []
         for i in range(g['nw']):
-            gR.append(g['rleft'] + i * dR)
+            gR.append(g['rleft'] + i * dR + d)
 
         gZ = []
         for i in range(g['nh']):
@@ -626,7 +627,7 @@ class SOLPSxport:
         self.data['solpsData']['dsa'] = np.array(dsa)
         self.data['solpsData']['psiSOLPS'] = np.array(psi_solps)
         
-        # from IPython import embed; embed()
+        from IPython import embed; embed()
 
         if plotit:
             psiN_range = [np.min(psi_solps), np.max(psi_solps)]
