@@ -7,7 +7,7 @@ I've left those routines below but commented them out and given a good replaceme
 A. Sontag, R.S. Wilcox 2019
 """
 
-from os import path, system
+from os import path, system, rename
 import numpy as np
 
 
@@ -345,7 +345,6 @@ def getProfDBPedFit(shotnum, timeid, runid, write_to_file=None):
      write_to_file: Give file name (prefer extension '.txt')
                     .pkl files using pickle module are the old format, but these can break if
                     you ever use a different version of Python to read than what was used to write.
-                    New format uses json module to write a .txt file
     """
 
     tree = 'profdb_ped'
@@ -388,7 +387,7 @@ def read_pfile(pfile_loc):
 
     Returns a dictionary with a non-intuitive set of keys (units are included)
     
-    ** Note: pfiles don't go into the SOL **
+    ** Note: pfiles don't normally go into the SOL **
     """
     with open(pfile_loc, mode='r') as pfile:
         lines = pfile.readlines()
@@ -531,8 +530,86 @@ def read_b2fgmtry(fileloc):
 
     return b2fgmtry
 
+
 # ----------------------------------------------------------------------------------------
 
+def new_b2xportparams(fileloc, dperp=None, chieperp=None, chiiperp=None, verbose=False, ndigits=8):
+    """
+    Update b2.transport.parameters file with new transport coefficients
+    Leaves old file in place, produces new file with appended name '_new'
+
+    Inputs:
+      fileloc    Should end in 'b2.transport.parameters' unless you're doing something weird
+      dperp      Perpendicular particle diffusion coefficient (will not be modified if left as None)
+      chieperp   Perpendicular electron thermal diffusion coefficient (will not be modified if left as None)
+      chiiperp   Perpendicular ion thermal diffusion coefficient (will not be modified if left as None)
+      ndigits    Number of digits beyond the decimal point to include before rounding
+
+    Expected format, from an example file from DIII-D:
+
+     &transport
+     write_nml_transp = .false.,
+     flag_dna=1, parm_dna=9*0.03,
+     flag_dpa=1, parm_dpa=9*0.0,
+     flag_vla=1, parm_vla=9*0.0,
+     flag_vsa=1, parm_vsa=9*0.2,
+     flag_hci=1, parm_hci=9*5.0,   # Ti is the same for all species, but n changes per species, so chi can be different
+     flag_hce=1, parm_hce=5.0,
+     flag_sig=1, parm_sig=0.000001,
+     flag_alf=1, parm_alf=0.000001,
+     /
+    """
+    if fileloc[-23:] != 'b2.transport.parameters':
+        print("WARNING: trying to modify something that should be named 'b2.transport.parameters', but it has a different name")
+
+    with open(fileloc, 'r') as f:
+        lines = f.readlines()
+
+    for i, l in enumerate(lines):
+
+        if dperp is not None:
+            if 'parm_dna' in l:
+                parm_ind = l.rfind('parm_dna')
+                if '*' in l[parm_ind:]:
+                    mult_ind = l.rfind('*')
+                    lines[i] = l[:mult_ind+1] + str(round(dperp, ndigits)) + ',\n'
+                    continue
+                else:
+                    print('WARNING: Unexpected file format for b2.transport.parameters')
+                    print('Not modifying b2.transport.parameters, so check PFR')
+                    return
+
+        if chiiperp is not None:   # test this, should be ok
+            if 'parm_hci' in l:
+                parm_ind = l.rfind('parm_hci')
+                if '*' in l[parm_ind:]:
+                    mult_ind = l.rfind('*')
+                    lines[i] = l[:mult_ind + 1] + str(round(chiiperp, ndigits)) + ',\n'
+                    continue
+                else:
+                    print('WARNING: Unexpected file format for b2.transport.parameters')
+                    print('Not modifying b2.transport.parameters, so check PFR')
+                    return
+
+        if chieperp is not None:
+            if 'parm_hce' in l:
+                eq_ind = l.rfind('=')
+                lines[i] = l[:eq_ind + 1] + str(round(chieperp, ndigits)) + ',\n'
+
+    # rename(fileloc, fileloc + '_old')
+    if verbose:
+        if fileloc[:2] == './':
+            fileloc_print = fileloc[2:]
+        else:
+            fileloc_print = fileloc
+        print('New version of ' + fileloc_print + ' generated: ' + fileloc_print + '_new')
+
+    with open(fileloc + '_new', 'w') as f:
+        for i in range(len(lines)):
+            f.write(lines[i])
+
+
+# ----------------------------------------------------------------------------------------
 
 def read_b2fstat(fileloc):
     """
