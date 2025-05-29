@@ -1,7 +1,12 @@
 """
 This class is used by routines in 'SOLPSxport_dr.py' to read experimental data,
 read SOLPS data, and then calculate the updated radial transport coefficients to attempt
-to match SOLPS to experimental profiles
+to match SOLPS to experimental profiles.
+
+This class is most easily implemented using commands in 'SOLPSxport_dr.py'
+
+The most up-to-date version of the code is located in a publicly available repository here, under an MIT license:
+https://github.com/ORNL-Fusion/SOLPSxport
 
 R.S. Wilcox, J.M. Canik and J.D. Lore 2020-2025
 contact: wilcoxrs@ornl.gov
@@ -127,14 +132,14 @@ class SOLPSxport:
 
     # ----------------------------------------------------------------------------------------
 
-    def getlast10profs_b2time(self, reject_fewer_than_10=True, plotit=False):
+    def getlast10profs_b2time(self, b2time_fileloc='b2time.nc', reject_fewer_than_10=True, plotit=False):
         """
         Get outboard midplane profiles from b2time, averaged over final 10 time steps
         """
         n_to_average = 10
 
         import scipy.io
-        with scipy.io.netcdf_file('b2time.nc') as b2t:
+        with scipy.io.netcdf_file(b2time_fileloc) as b2t:
             ne_nc = b2t.variables['ne3da'].data.copy()
             dn_nc = b2t.variables['dn3da'].data.copy()
             te_nc = b2t.variables['te3da'].data.copy()
@@ -145,7 +150,7 @@ class SOLPSxport:
         if len(ne_nc[:, 0]) < 10:
             if reject_fewer_than_10:
                 print('ERROR: Fewer than 10 time steps were run in the most recent SOLPS call ({0} in b2time.nc)'.format(len(ne_nc[:, 0])))
-                print("  Run again for at least 10 steps, or set flag 'reject_less_than_10' to False")
+                print("  Run again for at least 10 steps, or set flag 'reject_fewer_than_10' to False")
                 return
             else:
                 print("WARNING: Fewer than 10 time steps were run in the most recent SOLPS call ({0} in b2time.nc)".format(len(ne_nc[:, 0])))
@@ -399,9 +404,9 @@ class SOLPSxport:
 
         if psinMax is None:
             if 'psiSOLPS' in self.data['solpsData'].keys():
-                psinMax = np.max(self.data['solpsData']['psiSOLPS']) + 0.001
+                psinMax = np.max(self.data['solpsData']['psiSOLPS']) + 0.005
             else:
-                psinMax = 1.02
+                psinMax = 1.05
 
         psiProf = np.linspace(0, psinMax, npsi+1)
         
@@ -870,7 +875,7 @@ class SOLPSxport:
         
         
         # from IPython import embed; embed()
-        
+
         psi_solps = np.zeros(ncells)
         for i in range(ncells):
             psi_solps_LL = psiNinterp([crLowerLeft[i], czLowerLeft[i]])
@@ -1131,7 +1136,7 @@ class SOLPSxport:
     
     def calcXportCoef(self, plotit = True, Dn_min = 0.001, chie_min = 0.01, chii_min = 0.01,
                       Dn_max = 100, chie_max = 400, chii_max = 400, vrc_mag=0.0, 
-                      reduce_Ti_fileloc = None, plot_gradient_method = False,
+                      reduce_Ti_fileloc = None, plot_gradient_method = False, update_d_only=False,
                       fractional_change = 1, elec_prof_rad_shift = 0, chii_eq_chie = False,
                       use_ratio_bc = True, debug_plots = False, verbose = False, figblock = False,
                       ti_decay_len = 0.015, te_decay_len = None, ne_decay_len = None, rad_loc_for_exp_decay = 1.0,
@@ -1407,7 +1412,7 @@ class SOLPSxport:
                                                'vr_carbon': vr_carbon, 'D_carbon': D_carbon,
                                                'limits': coef_limits, 'elec_prof_shift': elec_prof_rad_shift}
         if plotit:
-            self.plotXportCoef(figblock=figblock, plot_Ti = not chii_eq_chie,
+            self.plotXportCoef(figblock=figblock, plot_Ti = not chii_eq_chie, update_d_only=update_d_only,
                                plot_older=('ne_old' in self.data['solpsData']['last10'].keys()),
                                include_gradient_method=plot_gradient_method)
 
@@ -1470,7 +1475,7 @@ class SOLPSxport:
     # ----------------------------------------------------------------------------------------
 
     def plotXportCoef(self, figblock=False, figsize=(14,7), plot_Ti = True, plot_older = False,
-                      include_gradient_method = False):
+                      include_gradient_method = False, update_d_only = False):
         """
         Plot the upstream profiles from SOLPS compared to the experiment
         along with the corresponding updated transport coefficients
@@ -1733,13 +1738,18 @@ class SOLPSxport:
 
     # ----------------------------------------------------------------------------------------
 
-    def plot_matching_case(self, include_ti=True, headroom=1.02):
+    def plot_matching_case(self, include_ti=True, headroom=1.02,
+                           exp_elec_psin_shift=0, xticks=np.arange(0.68, 1.21, 0.04)):
         """
         Plot the upstream profiles from SOLPS compared to the experiment, as well as diffusion coefficients
+
+        Inputs:
+          exp_elec_psin_shift     Radial shift of the experimental electron profiles (postive shifts them outward)
         """
-        if 'xportCoef' not in self.data['solpsData']:
-            print('Transport coefficients not yet calculated!! Calculating them using defaults')
-            self.calcXportCoef(plotit = False, debug_plots = False)
+        # This doesn't require updated transport coefficients, should work with an existing run without new coefs
+        # if 'xportCoef' not in self.data['solpsData']:
+        #     print('Transport coefficients not yet calculated!! Calculating them using defaults')
+        #     self.calcXportCoef(plotit = False, debug_plots = False)
 
         # Load SOLPS profiles and transport coefficients
 
@@ -1784,31 +1794,55 @@ class SOLPSxport:
         max_Ti = np.max([np.max(tisolps), max_raw_ti])
         max_temp = np.max([max_Te, max_Ti])  # just use this so they're on the same scale
 
-        f, ax = plt.subplots(2, nprofs, sharex='all')
+        f, ax = plt.subplots(2, nprofs, figsize=(8+nprofs,6), sharex='all', squeeze=False)
+
+        # Horizontal spacing
+        gap_lr = 0.12  # Gap between subplots (in fraction of the figure space)
+        total_width = 0.87
+        subplot_width = (total_width - gap_lr * (nprofs - 1)) / nprofs
+
+        # Vertical spacing
+        botfig_bottomloc = 0.12
+        botfig_height = 0.3
+        topfig_bottomloc = 0.46
+        topfig_height = 0.5
 
         for i in range(nprofs):
-            ax[0, i].errorbar(self.data['expData']['fitVals'][rawdat_keys[i]]['x'],
+            # Modify position (values between 0 and 1 are relative to the figure)
+            leftloc = 0.11 + i * (subplot_width + gap_lr)
+            ax[0,i].set_position([leftloc, topfig_bottomloc, subplot_width, topfig_height])
+            ax[1,i].set_position([leftloc, botfig_bottomloc, subplot_width, botfig_height])
+
+            ax[0, i].errorbar(self.data['expData']['fitVals'][rawdat_keys[i]]['x'] + exp_elec_psin_shift,
                               self.data['expData']['fitVals'][rawdat_keys[i]]['y'] * rawdat_scalars[i],
                               self.data['expData']['fitVals'][rawdat_keys[i]]['yerr'] * rawdat_scalars[i],
-                              xerr=None, fmt='o', ls='', c='k', mfc='None', mec='k',
+                              xerr=None, fmt='o', ls='', c='0.3', mfc='None', mec='0.3',
                               zorder=1, label='Experimental Data')
 
-        ax[0, 0].plot(psi_data_fit, nefit / 1.0e19, '--k', lw=3, zorder=2, label='Experimental Fit')
+        ax[0, 0].plot(psi_data_fit + exp_elec_psin_shift, nefit / 1.0e19, '--k', lw=3, zorder=2, label='Experimental Fit')
         ax[0, 0].plot(psi_solps, nesolps / 1.0e19, '-r', lw=2, zorder=3, label='SOLPS')
         ax[0, 0].set_ylabel('n$_e$ (10$^{19}$ m$^{-3}$)')
-        ax[0, 0].legend(loc='best', fontsize=14)
+        ax[0, 0].legend(loc='best', fontsize=10)
         ax[0, 0].set_ylim([0, max_ne * headroom])
 
         ax[1, 0].semilogy(psi_solps, dsolps, '-r', lw = 2)
+        ylim_coef = ax[1, 0].get_ylim()
+        if np.max(ylim_coef) / np.min(ylim_coef) < 10:
+            ax[1, 0].set_ylim([10**(np.floor(np.log10(np.min(dsolps)))-0.05), 10**(np.ceil(np.log10(np.max(dsolps)))+0.1)])
         ax[1, 0].set_ylabel('D')
 
-        ax[0, 1].plot(psi_data_fit, tefit, '--k', lw=3, zorder=2, label='Experimental Fit')
+        ax[0, 1].plot(psi_data_fit + exp_elec_psin_shift, tefit, '--k', lw=3, zorder=2, label='Experimental Fit')
         ax[0, 1].plot(psi_solps, tesolps, '-r', lw=2, zorder=3, label='SOLPS')
         ax[0, 1].set_ylabel('T$_e$ (keV)')
         ax[0, 1].set_ylim([0, max_temp * headroom])
         ax[0, 1].set_yticks(np.arange(0, max_temp * headroom + 0.2, 0.2))
 
         ax[1, 1].semilogy(psi_solps, kesolps, '-r', lw = 2)
+
+        ylim_coef = ax[1, 1].get_ylim()
+        if np.max(ylim_coef) / np.min(ylim_coef) < 10:
+            ax[1, 1].set_ylim([10**(np.floor(np.log10(np.min(kesolps)))-0.05), 10**(np.ceil(np.log10(np.max(kesolps)))+0.1)])
+            
         ax[1, 1].set_ylabel(r'$\chi_e$')
 
         if include_ti:
@@ -1825,6 +1859,11 @@ class SOLPSxport:
             ax[0, 2].set_yticks(np.arange(0, max_temp * headroom + 0.2, 0.2))
 
             ax[1, 2].semilogy(psi_solps, kisolps, '-r', lw = 2)
+            
+            ylim_coef = ax[1, 2].get_ylim()
+            if np.max(ylim_coef) / np.min(ylim_coef) < 10:
+                ax[1, 2].set_ylim([10**(np.floor(np.log10(np.min(kisolps)))-0.1), 10**(np.ceil(np.log10(np.max(kisolps)))+0.2)])
+                
             ax[1, 2].set_ylabel(r'$\chi_i$')
 
         for i in range(nprofs):
@@ -1832,9 +1871,9 @@ class SOLPSxport:
             for j in range(2):
                 ax[j, i].grid('on')
 
-        ax[0, 0].set_xticks(np.arange(0.84, 1.05, 0.04))
+        ax[0, 0].set_xticks(xticks)
         ax[0, 0].set_xlim([np.min(psi_solps) - 0.01, np.max(psi_solps) + 0.004])
-        plt.tight_layout()
+        # plt.tight_layout()
 
         plt.show(block=False)
 

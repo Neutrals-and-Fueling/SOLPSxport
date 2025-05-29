@@ -61,6 +61,9 @@ be useful to do this all quickly
 R.S. Wilcox, J.M. Canik and J.D. Lore 2020-2025
 contact: wilcoxrs@ornl.gov
 
+The most up-to-date version of the code is located in a publicly available repository here, under an MIT license:
+https://github.com/ORNL-Fusion/SOLPSxport
+
 Reference for this procedure:
 https://doi.org/10.1016/j.jnucmat.2010.11.084
 """
@@ -259,7 +262,7 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
 
     print("Running calcXportCoeff")
     xp.calcXportCoef(plotit=plotall or plot_xport_coeffs, reduce_Ti_fileloc=reduce_Ti_fileloc, Dn_min=Dn_min,
-                     vrc_mag=vrc_mag, verbose=verbose, Dn_max=Dn_max,
+                     vrc_mag=vrc_mag, verbose=verbose, Dn_max=Dn_max, update_d_only=update_d_only,
                      fractional_change=fractional_change, elec_prof_rad_shift=elec_prof_rad_shift,
                      chii_min=chii_min, chii_max=chii_max, chie_min=chie_min, chie_max=chie_max,
                      chii_eq_chie=chii_eq_chie, figblock=figblock, use_ratio_bc=use_ratio_bc,
@@ -350,7 +353,6 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
 
 # --- Launch main() ----------------------------------------------------------------------
 
-
 if __name__ == '__main__':
     import argparse
 
@@ -393,7 +395,6 @@ if __name__ == '__main__':
              reduce_Ti_fileloc=args.tiratiofile, fractional_change=args.fractional_change, figblock=True)
 
 # ----------------------------------------------------------------------------------------
-
 
 def increment_run(new_coefficients = 'b2.transport.inputfile_new', update_old_last10s = True,
                   new_b2xportparams = True, ntim_new = 100, dtim_new = '1.0e-6'):
@@ -462,7 +463,6 @@ def increment_run(new_coefficients = 'b2.transport.inputfile_new', update_old_la
 
 # ----------------------------------------------------------------------------------------
 
-
 def update_old_last10_files():
     """
     Copy last10 files to .old so that previous profiles can be plotted on next call
@@ -473,7 +473,6 @@ def update_old_last10_files():
         shutil.copyfile(prof+'3da.last10', prof+'3da.last10.old')
 
 # ----------------------------------------------------------------------------------------
-
 
 def track_inputfile_iterations(rundir=None, impurity_list=['c'], cmap='viridis', Dn_scalar = 100):
     """
@@ -557,3 +556,90 @@ def track_inputfile_iterations(rundir=None, impurity_list=['c'], cmap='viridis',
 
     plt.show(block=False)
 
+# ----------------------------------------------------------------------------------------
+
+def check_radial_fluxes(gfile_loc=None, b2fgmtry_loc=None, verbose=True, impurity_list=['c'],
+                        figblock=False):
+    """
+    Check the radial particle and energy flux profiles for an existing SOLPS simulation
+    """
+
+    xp = sxp.SOLPSxport(workdir=os.getcwd(), gfile_loc=gfile_loc, impurity_list=impurity_list)
+
+    if verbose:
+        print("Reading SOLPS output")
+    try:
+        dsa = sut.read_dsa("dsa")
+        b2mn = sut.scrape_b2mn("b2mn.dat")
+        if b2fgmtry_loc is None:
+            geo = sut.read_b2fgmtry("../baserun/b2fgmtry")
+        else:
+            geo = sut.read_b2fgmtry(b2fgmtry_loc)
+        state = sut.read_b2fstate("b2fstate")
+    except:
+        print('Failed to read output directly, will try using b2plot')
+        sut.set_b2plot_dev(verbose=verbose)
+        xp.b2plot_ready = True
+        dsa = None
+        geo = None
+        state = None
+        b2mn = None
+
+    xp.calcPsiVals(plotit=False, dsa=dsa, b2mn=b2mn, geo=geo)
+
+    xp.get_integrated_radial_fluxes(plotit=True, dsa=dsa, geo=geo, state=state, figblock=figblock)
+
+# ----------------------------------------------------------------------------------------
+
+def plot_matching_case(solps_dir, gfile_loc, profiles_fileloc=None, shotnum=None, ptimeid=None, prunid=None,
+                       include_ti=False, plot_psi_mapping = False, b2fgmtry_loc='./b2fgmtry', b2timenc_loc='b2time.nc',
+                       xticks=np.arange(0.68, 1.21, 0.04), exp_elec_psin_shift=0, verbose=True):
+    """
+    Use this to show the final agreement with measurements
+    """
+    xp = sxp.SOLPSxport(solps_dir, gfile_loc)
+    if os.path.isfile('ne3da.last10'):
+        xp.getSOLPSlast10Profs()
+    else:
+        xp.getlast10profs_b2time(b2time_fileloc=b2timenc_loc, reject_fewer_than_10=False)
+    xp.loadProfDBPedFit(profiles_file=profiles_fileloc, shotnum=shotnum, timeid=ptimeid, runid=prunid, verbose=verbose)
+    xp.populatePedFits()
+    b2fgmtry = sut.read_b2fgmtry(b2fgmtry_loc)
+    xp.calcPsiVals(plotit=plot_psi_mapping, geo=b2fgmtry, verbose=verbose)
+
+    xp.plot_matching_case(include_ti=include_ti, xticks=xticks, exp_elec_psin_shift=exp_elec_psin_shift)
+
+# ----------------------------------------------------------------------------------------
+
+def overplot_addtl_case(fignum, solps_dir, gfile_loc, linespec='-b', run_label = None, include_ti=False,
+                        plot_psi_mapping = False, b2fgmtry_loc='./b2fgmtry',b2timenc_loc='b2time.nc',
+                        verbose=True):
+    """
+    After you've run "plot_matching_case", run this to overplot additional SOLPS simulations,
+    comparing against the same experimental data
+
+    You'll need to manually adjust axis limits if they no longer fit with this new data
+    """
+    xp = sxp.SOLPSxport(solps_dir, gfile_loc)
+    if solps_dir[-1] != '/':
+        solps_dir += '/'
+    if os.path.isfile(solps_dir + 'ne3da.last10'):
+        xp.getSOLPSlast10Profs()
+    else:
+        xp.getlast10profs_b2time(b2time_fileloc=b2timenc_loc, reject_fewer_than_10=False)
+    b2fgmtry = sut.read_b2fgmtry(b2fgmtry_loc)
+    xp.calcPsiVals(plotit=plot_psi_mapping, geo=b2fgmtry, verbose=verbose)
+
+    psi_solps = xp.data['solpsData']['psiSOLPS']
+
+    ax = plt.figure(fignum).axes
+    ax[0].plot(psi_solps, xp.data['solpsData']['last10']['ne'] / 1.0e19, linespec, lw=2, zorder=3, label=run_label)
+    ax[0].legend(loc='best', fontsize=10)
+
+    ax[2].semilogy(psi_solps, xp.data['solpsData']['last10']['dn'], linespec, lw=2)
+    ax[1].plot(psi_solps, xp.data['solpsData']['last10']['te'] * 1.0e-3, linespec, lw=2, zorder=3, label=run_label)
+    ax[3].semilogy(psi_solps, xp.data['solpsData']['last10']['ke'], linespec, lw=2)
+
+    if include_ti: # Doesn't work yet
+        ax[2].plot(psi_solps, xp.data['solpsData']['last10']['ti'] * 1.0e-3, linespec, lw=2, zorder=3, label=run_label)
+        ax[5].semilogy(psi_solps, xp.data['solpsData']['last10']['ki'], linespec, lw=2)
