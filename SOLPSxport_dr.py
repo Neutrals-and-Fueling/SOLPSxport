@@ -320,7 +320,7 @@ def main(gfile_loc = None, new_filename='b2.transport.inputfile_new',
         if gammaD[0] > 0.05*np.max(gammaD):
             print("\nInjected D particles escaping radial grid boundary: {:4.1f}%".format(100*gammaD[-1] / gammaD[0]))
         else:
-            print('\nSep. D particle flux escaping radial grid boundary: {:4.1f}%'.format(100*gammaD[-1]/gammaD[len(psin_solps)/2]))
+            print('\nSep. D particle flux escaping radial grid boundary: {:4.1f}%'.format(100*gammaD[-1]/gammaD[int(len(psin_solps)/2)]))
 
         print("Injected energy flux escaping radial grid boundary: {:4.1f}%\n".
               format(100*xp.data['solpsData']['profiles']['Qtot'][-1]/xp.data['solpsData']['profiles']['Qtot'][0]))
